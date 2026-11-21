@@ -1,0 +1,12 @@
+name: BombRush
+version: 1.0.0
+main: com.example.bombrush.BombRushPlugin
+api-version: '1.21'
+softdepend: [WorldEdit, FastAsyncWorldEdit]
+description: BombRush round shooter with C4 TNT BlockDisplay, wiring defusal, coins, and OP WorldEdit map tools.
+
+commands:
+  br:
+    description: BombRush gameplay, shop, settings, and OP map/build commands
+    usage: /br help
+    aliases: [bombrush]
