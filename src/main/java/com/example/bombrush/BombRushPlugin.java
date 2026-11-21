@@ -40,7 +40,6 @@ import org.joml.Vector3f;
 
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -119,16 +118,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                     ThreadLocalRandom.current().nextDouble(minX + 0.5, Math.max(minX + 0.6, maxX - 0.5)),
                     minY + yOffset,
                     ThreadLocalRandom.current().nextDouble(minZ + 0.5, Math.max(minZ + 0.6, maxZ - 0.5))
-            );
-        }
-
-        Location centerGround() {
-            if (min == null || max == null || min.getWorld() == null) return null;
-            return new Location(
-                    min.getWorld(),
-                    (min.getX() + max.getX()) / 2.0,
-                    Math.min(min.getY(), max.getY()) + 0.2,
-                    (min.getZ() + max.getZ()) / 2.0
             );
         }
     }
@@ -403,7 +392,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 for (WeaponId w : WeaponId.values()) {
                     if (w.starter || w.baseMaterial == Material.SNOWBALL || w.baseMaterial == Material.SPLASH_POTION || w.baseMaterial == Material.IRON_SWORD) continue;
                     boolean owned = prof.unlockedGuns.contains(w);
-                    String status = owned ? ChatColor.GREEN + "[UNLOCKED]" : ChatColor.YELLOW + w.cost + " coins";
+                    String status = owned ? (ChatColor.GREEN + "[UNLOCKED]") : ("" + ChatColor.YELLOW + w.cost + " coins");
                     p.sendMessage(ChatColor.AQUA + w.id + ChatColor.GRAY + " (" + w.displayName + ") - " + status);
                 }
                 p.sendMessage(ChatColor.GRAY + "Use " + ChatColor.YELLOW + "/br buy <gun>" + ChatColor.GRAY + " to add it to your round gun pool.");
@@ -721,7 +710,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         BlockData tntData = Bukkit.createBlockData(Material.TNT);
         BlockDisplay display = (BlockDisplay) w.spawnEntity(loc, EntityType.BLOCK_DISPLAY);
         display.setBlock(tntData);
-        // C4-like low-profile block shape (wider/longer slab, flattened height)
         display.setTransformation(new Transformation(
                 new Vector3f(-0.35f, 0.0f, -0.25f),
                 new AxisAngle4f(),
@@ -901,7 +889,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         Action act = event.getAction();
         ItemStack hand = event.getItem();
 
-        // Defuse when right-clicking near planted C4
         if (bombPlanted && plantedBombLoc != null && "DEFUSERS".equals(playerTeam.get(p.getUniqueId()))
                 && (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK)
                 && p.getLocation().distanceSquared(plantedBombLoc) <= 20.0) {
@@ -909,7 +896,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             return;
         }
 
-        // Plant C4
         if (isBombItem(hand) && (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK)) {
             event.setCancelled(true);
             plantC4(p);
@@ -1154,7 +1140,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
     @EventHandler
     public void onFireworkExplode(FireworkExplodeEvent event) {
-        // Keep combat sounds crisp
     }
 
     @EventHandler
@@ -1165,7 +1150,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             rewardCoins(killer.getUniqueId(), 25, "Eliminating " + dead.getName());
         }
 
-        // If bomb carrier dies with unplanted C4, drop C4 item at death spot
         if (dead.getUniqueId().equals(bombCarrierId) && !bombPlanted) {
             event.getDrops().removeIf(this::isBombItem);
             if (dead.getWorld() != null) {
