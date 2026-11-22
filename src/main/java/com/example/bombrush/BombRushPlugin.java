@@ -47,42 +47,58 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
     private static final String DEFUSE_GUI_TITLE = ChatColor.DARK_RED + "" + ChatColor.BOLD + "C4 Wiring Defusal";
 
+    public enum WeaponSlotType {
+        PRIMARY,
+        SECONDARY,
+        UTILITY
+    }
+
     public enum WeaponId {
-        // Starter guns (4)
-        ASSAULT_RIFLE("assault_rifle", "Assault Rifle", true, 0, Material.CROSSBOW, "iron_axe"),
-        PUMP_SHOTGUN("pump_shotgun", "Pump Shotgun", true, 0, Material.BOW, "mace"),
-        GLOCK("glock", "Glock", true, 0, Material.CROSSBOW, "flint_and_steel"),
-        DEAGLE("deagle", "Deagle", true, 0, Material.MACE, "netherite_sword"),
+        // Starter guns
+        ASSAULT_RIFLE("assault_rifle", "Assault Rifle", WeaponSlotType.PRIMARY, true, 0, Material.CROSSBOW, "iron_axe"),
+        PUMP_SHOTGUN("pump_shotgun", "Pump Shotgun", WeaponSlotType.PRIMARY, true, 0, Material.BOW, "mace"),
+        GLOCK("glock", "Glock", WeaponSlotType.SECONDARY, true, 0, Material.CROSSBOW, "flint_and_steel"),
+        DEAGLE("deagle", "Deagle", WeaponSlotType.SECONDARY, true, 0, Material.MACE, "netherite_sword"),
 
-        // Unlockable roster guns (6 — no musket, flintlock, or grenade launcher)
-        SNIPER("sniper", "Sniper", false, 150, Material.SPYGLASS, "spyglass"),
-        TEC_9("tec_9", "Tec-9", false, 100, Material.CROSSBOW, "repeater"),
-        SHORTY("shorty", "Shorty", false, 110, Material.BOW, "diamond_axe"),
-        BURST_RIFLE("burst_rifle", "Burst Rifle", false, 140, Material.CROSSBOW, "trident"),
-        REVOLVER("revolver", "Revolver", false, 125, Material.MACE, "blaze_rod"),
-        HARPOON_GUN("harpoon_gun", "Harpoon Gun", false, 160, Material.CROSSBOW, "fishing_rod"),
+        // Unlockable roster guns (no musket, flintlock, or grenade launcher)
+        SNIPER("sniper", "Sniper", WeaponSlotType.PRIMARY, false, 150, Material.SPYGLASS, "spyglass"),
+        TEC_9("tec_9", "Tec-9", WeaponSlotType.SECONDARY, false, 100, Material.CROSSBOW, "repeater"),
+        SHORTY("shorty", "Shorty", WeaponSlotType.PRIMARY, false, 110, Material.BOW, "diamond_axe"),
+        BURST_RIFLE("burst_rifle", "Burst Rifle", WeaponSlotType.PRIMARY, false, 140, Material.CROSSBOW, "trident"),
+        REVOLVER("revolver", "Revolver", WeaponSlotType.SECONDARY, false, 125, Material.MACE, "blaze_rod"),
+        HARPOON_GUN("harpoon_gun", "Harpoon Gun", WeaponSlotType.PRIMARY, false, 160, Material.CROSSBOW, "fishing_rod"),
 
-        // Utilities (5)
-        GRENADE("grenade", "Frag Grenade", true, 0, Material.SNOWBALL, "tnt"),
-        SMOKE_GRENADE("smoke_grenade", "Smoke Grenade", true, 0, Material.SNOWBALL, "gray_dye"),
-        FLASHBANG("flashbang", "Flashbang", true, 0, Material.SNOWBALL, "glowstone_dust"),
-        MOLOTOV("molotov", "Molotov", true, 0, Material.SPLASH_POTION, "fire_charge"),
-        KNIFE("knife", "Combat Knife", true, 0, Material.IRON_SWORD, "shears");
+        // Utilities
+        GRENADE("grenade", "Frag Grenade", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "ender_eye"),
+        SMOKE_GRENADE("smoke_grenade", "Smoke Grenade", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "gray_dye"),
+        FLASHBANG("flashbang", "Flashbang", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "glowstone_dust"),
+        MOLOTOV("molotov", "Molotov", WeaponSlotType.UTILITY, true, 0, Material.SPLASH_POTION, "fire_charge"),
+        KNIFE("knife", "Combat Knife", WeaponSlotType.UTILITY, true, 0, Material.IRON_SWORD, null);
 
         public final String id;
         public final String displayName;
+        public final WeaponSlotType slotType;
         public final boolean starter;
         public final int cost;
         public final Material baseMaterial;
         public final String uniqueItemModel;
 
-        WeaponId(String id, String displayName, boolean starter, int cost, Material baseMaterial, String uniqueItemModel) {
+        WeaponId(String id, String displayName, WeaponSlotType slotType, boolean starter, int cost, Material baseMaterial, String uniqueItemModel) {
             this.id = id;
             this.displayName = displayName;
+            this.slotType = slotType;
             this.starter = starter;
             this.cost = cost;
             this.baseMaterial = baseMaterial;
             this.uniqueItemModel = uniqueItemModel;
+        }
+
+        public boolean isGun() {
+            return slotType == WeaponSlotType.PRIMARY || slotType == WeaponSlotType.SECONDARY;
+        }
+
+        public boolean isGrenade() {
+            return this == GRENADE || this == SMOKE_GRENADE || this == FLASHBANG || this == MOLOTOV;
         }
 
         public static WeaponId fromId(String id) {
@@ -147,7 +163,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
         PlayerProfile() {
             for (WeaponId w : WeaponId.values()) {
-                if (w.starter && w.baseMaterial != Material.SNOWBALL && w.baseMaterial != Material.SPLASH_POTION && w.baseMaterial != Material.IRON_SWORD) {
+                if (w.starter && w.isGun()) {
                     unlockedGuns.add(w);
                 }
             }
@@ -166,11 +182,27 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         }
     }
 
+    private static class PrimedGrenade {
+        final UUID ownerId;
+        final WeaponId type;
+        final long detonateAtMillis;
+        Snowball thrownEntity;
+        Location lastKnownLoc;
+        boolean thrown = false;
+        boolean detonated = false;
+
+        PrimedGrenade(UUID ownerId, WeaponId type, long detonateAtMillis) {
+            this.ownerId = ownerId;
+            this.type = type;
+            this.detonateAtMillis = detonateAtMillis;
+        }
+    }
+
     private final Map<String, BombMap> maps = new LinkedHashMap<>();
     private final Map<UUID, PlayerProfile> profiles = new HashMap<>();
     private final Set<UUID> buildModePlayers = new HashSet<>();
 
-    private final Map<UUID, String> playerTeam = new HashMap<>(); // "PLANTERS" or "DEFUSERS"
+    private final Map<UUID, String> playerTeam = new HashMap<>();
     private UUID bombCarrierId;
     private boolean roundActive = false;
     private int roundNumber = 0;
@@ -185,6 +217,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
     private final Map<UUID, Long> fireCooldowns = new HashMap<>();
     private final Map<UUID, String> projKind = new HashMap<>();
+    private final Map<UUID, PrimedGrenade> primedByPlayer = new HashMap<>();
+    private final Map<UUID, PrimedGrenade> primedByEntity = new HashMap<>();
 
     private NamespacedKey keyWeaponId;
     private NamespacedKey keyBombItem;
@@ -261,7 +295,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                     List<String> gunList = pSec.getStringList(uuidStr + ".unlocked_guns");
                     for (String g : gunList) {
                         WeaponId w = WeaponId.fromId(g);
-                        if (w != null) prof.unlockedGuns.add(w);
+                        if (w != null && w.isGun()) prof.unlockedGuns.add(w);
                     }
                     profiles.put(uid, prof);
                 } catch (Exception ignored) {
@@ -390,10 +424,11 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 PlayerProfile prof = profile(p.getUniqueId());
                 p.sendMessage(ChatColor.GOLD + "=== BombRush Gun Shop (Coins: " + prof.coins + ") ===");
                 for (WeaponId w : WeaponId.values()) {
-                    if (w.starter || w.baseMaterial == Material.SNOWBALL || w.baseMaterial == Material.SPLASH_POTION || w.baseMaterial == Material.IRON_SWORD) continue;
+                    if (w.starter || !w.isGun()) continue;
                     boolean owned = prof.unlockedGuns.contains(w);
                     String status = owned ? (ChatColor.GREEN + "[UNLOCKED]") : ("" + ChatColor.YELLOW + w.cost + " coins");
-                    p.sendMessage(ChatColor.AQUA + w.id + ChatColor.GRAY + " (" + w.displayName + ") - " + status);
+                    String tag = w.slotType == WeaponSlotType.PRIMARY ? "[Primary]" : "[Secondary]";
+                    p.sendMessage(ChatColor.AQUA + w.id + ChatColor.GRAY + " (" + w.displayName + " " + tag + ") - " + status);
                 }
                 p.sendMessage(ChatColor.GRAY + "Use " + ChatColor.YELLOW + "/br buy <gun>" + ChatColor.GRAY + " to add it to your round gun pool.");
             }
@@ -404,7 +439,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                     return true;
                 }
                 WeaponId w = WeaponId.fromId(args[1]);
-                if (w == null || w.starter || w.baseMaterial == Material.SNOWBALL || w.baseMaterial == Material.SPLASH_POTION || w.baseMaterial == Material.IRON_SWORD) {
+                if (w == null || w.starter || !w.isGun()) {
                     p.sendMessage(ChatColor.RED + "Unknown or non-purchasable gun.");
                     return true;
                 }
@@ -420,7 +455,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 prof.coins -= w.cost;
                 prof.unlockedGuns.add(w);
                 saveData();
-                p.sendMessage(ChatColor.GREEN + "Unlocked " + w.displayName + "! Added to your random round gun pool.");
+                p.sendMessage(ChatColor.GREEN + "Unlocked " + w.displayName + "! Added to your " + w.slotType.name().toLowerCase(Locale.ROOT) + " round pool.");
             }
             case "setting" -> {
                 if (!(sender instanceof Player p)) return true;
@@ -546,7 +581,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         if (args.length == 2 && args[0].equalsIgnoreCase("buy")) {
             List<String> out = new ArrayList<>();
             for (WeaponId w : WeaponId.values()) {
-                if (!w.starter && w.baseMaterial != Material.SNOWBALL && w.baseMaterial != Material.SPLASH_POTION && w.baseMaterial != Material.IRON_SWORD) {
+                if (!w.starter && w.isGun()) {
                     out.add(w.id);
                 }
             }
@@ -619,7 +654,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             }
         }
 
-        // Exactly ONE person on the planting team gets the bomb
         if (planters.isEmpty()) {
             Player promoted = defusers.remove(0);
             playerTeam.put(promoted.getUniqueId(), "PLANTERS");
@@ -630,7 +664,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         Player carrier = planters.get(ThreadLocalRandom.current().nextInt(planters.size()));
         bombCarrierId = carrier.getUniqueId();
 
-        // Give each player 2 random guns from their unlocked pool + 2 random utilities
         List<WeaponId> utilityPool = Arrays.asList(
                 WeaponId.GRENADE,
                 WeaponId.SMOKE_GRENADE,
@@ -641,17 +674,30 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
         for (Player p : participants) {
             PlayerProfile prof = profile(p.getUniqueId());
-            List<WeaponId> pool = new ArrayList<>(prof.unlockedGuns);
-            if (pool.size() < 2) {
+
+            List<WeaponId> ownedPrimaries = new ArrayList<>();
+            List<WeaponId> ownedSecondaries = new ArrayList<>();
+            for (WeaponId g : prof.unlockedGuns) {
+                if (g.slotType == WeaponSlotType.PRIMARY) ownedPrimaries.add(g);
+                else if (g.slotType == WeaponSlotType.SECONDARY) ownedSecondaries.add(g);
+            }
+
+            if (ownedPrimaries.isEmpty()) {
                 for (WeaponId w : WeaponId.values()) {
-                    if (w.starter && !pool.contains(w) && w.baseMaterial != Material.SNOWBALL && w.baseMaterial != Material.SPLASH_POTION && w.baseMaterial != Material.IRON_SWORD) {
-                        pool.add(w);
-                    }
+                    if (w.starter && w.slotType == WeaponSlotType.PRIMARY) ownedPrimaries.add(w);
                 }
             }
-            Collections.shuffle(pool);
-            p.getInventory().addItem(buildWeaponItem(pool.get(0)));
-            p.getInventory().addItem(buildWeaponItem(pool.get(Math.min(1, pool.size() - 1))));
+            if (ownedSecondaries.isEmpty()) {
+                for (WeaponId w : WeaponId.values()) {
+                    if (w.starter && w.slotType == WeaponSlotType.SECONDARY) ownedSecondaries.add(w);
+                }
+            }
+
+            WeaponId chosenPrimary = ownedPrimaries.get(ThreadLocalRandom.current().nextInt(ownedPrimaries.size()));
+            WeaponId chosenSecondary = ownedSecondaries.get(ThreadLocalRandom.current().nextInt(ownedSecondaries.size()));
+
+            p.getInventory().addItem(buildWeaponItem(chosenPrimary));
+            p.getInventory().addItem(buildWeaponItem(chosenSecondary));
 
             List<WeaponId> utils = new ArrayList<>(utilityPool);
             Collections.shuffle(utils);
@@ -666,7 +712,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             String team = playerTeam.get(p.getUniqueId());
             ChatColor tColor = "PLANTERS".equals(team) ? ChatColor.RED : ChatColor.AQUA;
             p.sendMessage(ChatColor.GOLD + "Round " + roundNumber + " on " + ChatColor.YELLOW + currentMap.name
-                    + ChatColor.GOLD + " | Team: " + tColor + team);
+                    + ChatColor.GOLD + " | Team: " + tColor + team
+                    + ChatColor.GRAY + " (" + chosenPrimary.displayName + " + " + chosenSecondary.displayName + ")");
         }
 
         Bukkit.broadcastMessage(ChatColor.GOLD + "[BombRush] Round " + roundNumber + " started on random map '" + currentMap.name + "'!");
@@ -677,9 +724,17 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         ItemMeta meta = stack.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(ChatColor.YELLOW + w.displayName);
-            meta.setItemModel(NamespacedKey.minecraft(w.uniqueItemModel));
+            if (w.uniqueItemModel != null) {
+                meta.setItemModel(NamespacedKey.minecraft(w.uniqueItemModel));
+            }
             List<String> lore = new ArrayList<>();
-            lore.add(ChatColor.GRAY + "BombRush " + (w.starter ? "Starter" : "Roster") + " Item");
+            if (w.isGun()) {
+                lore.add(ChatColor.GRAY + (w.slotType == WeaponSlotType.PRIMARY ? "Primary Gun" : "Secondary Gun"));
+            } else if (w.isGrenade()) {
+                lore.add(ChatColor.GRAY + "Right-click to prime (5s fuse), click again to throw");
+            } else {
+                lore.add(ChatColor.GRAY + "Melee Weapon");
+            }
             if (w == WeaponId.SNIPER) lore.add(ChatColor.AQUA + "Right-click to ADS (Spyglass Zoom)");
             if (w == WeaponId.HARPOON_GUN) lore.add(ChatColor.AQUA + "Crossbow Harpoon Launcher");
             meta.setLore(lore);
@@ -861,7 +916,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         }
     }
 
-    // ================= WEAPON & UTILITY COMBAT =================
+    // ================= WEAPON & GRENADE COMBAT =================
 
     private WeaponId getWeapon(ItemStack item) {
         if (item == null || !item.hasItemMeta()) return null;
@@ -904,6 +959,15 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
         WeaponId w = getWeapon(hand);
         if (w == null) return;
+
+        // Grenades: 1st right-click starts 5s timer; 2nd right-click throws; never explodes on impact
+        if (w.isGrenade()) {
+            if (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK) {
+                event.setCancelled(true);
+                handleGrenadeInteract(p, hand, w);
+            }
+            return;
+        }
 
         // Sniper is the ONLY gun that can ADS via spyglass
         if (w == WeaponId.SNIPER) {
@@ -988,9 +1052,119 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 fireCooldowns.put(p.getUniqueId(), now + 700L);
                 launchHarpoon(p);
             }
-            case GRENADE, SMOKE_GRENADE, FLASHBANG, MOLOTOV -> {
-                event.setCancelled(true);
-                throwUtility(p, hand, w);
+            default -> {
+            }
+        }
+    }
+
+    private void handleGrenadeInteract(Player p, ItemStack hand, WeaponId util) {
+        PrimedGrenade existing = primedByPlayer.get(p.getUniqueId());
+
+        // First interact: arm the grenade and start the 5-second fuse
+        if (existing == null || existing.detonated) {
+            long detonateAt = System.currentTimeMillis() + 5000L;
+            PrimedGrenade pg = new PrimedGrenade(p.getUniqueId(), util, detonateAt);
+            pg.lastKnownLoc = p.getLocation().clone();
+            primedByPlayer.put(p.getUniqueId(), pg);
+
+            p.sendMessage(ChatColor.RED + util.displayName + " primed! 5s fuse — interact again to throw!");
+            p.playSound(p.getLocation(), Sound.BLOCK_TRIPWIRE_CLICK_ON, 1.2f, 1.4f);
+
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+                    if (pg.detonated) {
+                        cancel();
+                        return;
+                    }
+                    if (pg.thrown && pg.thrownEntity != null && pg.thrownEntity.isValid()) {
+                        pg.lastKnownLoc = pg.thrownEntity.getLocation().clone();
+                    } else {
+                        Player owner = Bukkit.getPlayer(pg.ownerId);
+                        if (owner != null && owner.isOnline()) {
+                            pg.lastKnownLoc = owner.getLocation().clone();
+                        }
+                    }
+
+                    long remainingMs = pg.detonateAtMillis - System.currentTimeMillis();
+                    if (remainingMs <= 0) {
+                        triggerGrenadeEffect(pg);
+                        cancel();
+                    } else if (pg.lastKnownLoc != null && pg.lastKnownLoc.getWorld() != null) {
+                        pg.lastKnownLoc.getWorld().spawnParticle(Particle.SMOKE, pg.lastKnownLoc.clone().add(0, 0.25, 0), 2, 0.08, 0.08, 0.08, 0.01);
+                    }
+                }
+            }.runTaskTimer(this, 0L, 2L);
+            return;
+        }
+
+        // Second interact (before throwing): throw the already-primed grenade
+        if (!existing.thrown && existing.type == util) {
+            existing.thrown = true;
+            if (p.getGameMode() != GameMode.CREATIVE && hand != null) {
+                hand.setAmount(Math.max(0, hand.getAmount() - 1));
+            }
+            p.getWorld().playSound(p.getLocation(), Sound.ENTITY_SNOWBALL_THROW, 1.0f, 1.1f);
+            Snowball sb = p.launchProjectile(Snowball.class, p.getEyeLocation().getDirection().normalize().multiply(1.35));
+            existing.thrownEntity = sb;
+            existing.lastKnownLoc = sb.getLocation().clone();
+            primedByEntity.put(sb.getUniqueId(), existing);
+            p.sendMessage(ChatColor.YELLOW + "Threw " + util.displayName + "! Detonates when the 5s timer finishes.");
+        }
+    }
+
+    private void triggerGrenadeEffect(PrimedGrenade pg) {
+        if (pg.detonated) return;
+        pg.detonated = true;
+        primedByPlayer.remove(pg.ownerId, pg);
+
+        if (pg.thrownEntity != null) {
+            primedByEntity.remove(pg.thrownEntity.getUniqueId());
+            if (pg.thrownEntity.isValid()) {
+                pg.lastKnownLoc = pg.thrownEntity.getLocation().clone();
+                pg.thrownEntity.remove();
+            }
+        }
+
+        Location loc = pg.lastKnownLoc;
+        if (loc == null || loc.getWorld() == null) return;
+        World w = loc.getWorld();
+
+        switch (pg.type) {
+            case GRENADE -> w.createExplosion(loc, 3.2f, false, false);
+            case SMOKE_GRENADE -> new BukkitRunnable() {
+                int ticks = 0;
+
+                @Override
+                public void run() {
+                    if (ticks++ > 120) {
+                        cancel();
+                        return;
+                    }
+                    w.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 18, 2.2, 1.2, 2.2, 0.01);
+                }
+            }.runTaskTimer(this, 0L, 2L);
+            case FLASHBANG -> {
+                w.spawnParticle(Particle.FLASH, loc, 6);
+                w.playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_BLAST_FAR, 1.5f, 1.8f);
+                for (Entity e : w.getNearbyEntities(loc, 7.0, 5.0, 7.0)) {
+                    if (e instanceof Player p) {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20 * 3, 1, false, false));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 20 * 3, 0, false, false));
+                    }
+                }
+            }
+            case MOLOTOV -> {
+                for (int i = 0; i < 6; i++) {
+                    Location fl = loc.clone().add(
+                            ThreadLocalRandom.current().nextDouble(-1.8, 1.8),
+                            0,
+                            ThreadLocalRandom.current().nextDouble(-1.8, 1.8)
+                    );
+                    Block b = fl.getBlock();
+                    if (b.getType().isAir()) b.setType(Material.FIRE);
+                }
+                w.playSound(loc, Sound.ITEM_FIRECHARGE_USE, 1.2f, 1.0f);
             }
             default -> {
             }
@@ -1056,17 +1230,15 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         projKind.put(harpoon.getUniqueId(), "harpoon");
     }
 
-    private void throwUtility(Player thrower, ItemStack item, WeaponId util) {
-        if (thrower.getGameMode() != GameMode.CREATIVE) {
-            item.setAmount(Math.max(0, item.getAmount() - 1));
-        }
-        thrower.getWorld().playSound(thrower.getLocation(), Sound.ENTITY_SNOWBALL_THROW, 1.0f, 1.1f);
-        Snowball sb = thrower.launchProjectile(Snowball.class, thrower.getEyeLocation().getDirection().normalize().multiply(1.35));
-        projKind.put(sb.getUniqueId(), util.id);
-    }
-
     @EventHandler
     public void onProjectileHit(ProjectileHitEvent event) {
+        PrimedGrenade pg = primedByEntity.get(event.getEntity().getUniqueId());
+        if (pg != null) {
+            // Do NOT explode on impact; keep ticking until the 5-second timer expires
+            pg.lastKnownLoc = event.getEntity().getLocation().clone();
+            return;
+        }
+
         String kind = projKind.remove(event.getEntity().getUniqueId());
         if (kind == null) return;
 
@@ -1074,51 +1246,12 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         World w = loc.getWorld();
         if (w == null) return;
 
-        switch (kind) {
-            case "harpoon" -> {
-                if (event.getHitEntity() instanceof LivingEntity target && event.getEntity().getShooter() instanceof Player shooter) {
-                    Vector pull = shooter.getLocation().toVector().subtract(target.getLocation().toVector()).normalize().multiply(1.3).setY(0.45);
-                    target.setVelocity(pull);
-                }
-                event.getEntity().remove();
+        if ("harpoon".equals(kind)) {
+            if (event.getHitEntity() instanceof LivingEntity target && event.getEntity().getShooter() instanceof Player shooter) {
+                Vector pull = shooter.getLocation().toVector().subtract(target.getLocation().toVector()).normalize().multiply(1.3).setY(0.45);
+                target.setVelocity(pull);
             }
-            case "grenade" -> w.createExplosion(loc, 3.2f, false, false);
-            case "smoke_grenade" -> {
-                new BukkitRunnable() {
-                    int ticks = 0;
-
-                    @Override
-                    public void run() {
-                        if (ticks++ > 120) {
-                            cancel();
-                            return;
-                        }
-                        w.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 18, 2.2, 1.2, 2.2, 0.01);
-                    }
-                }.runTaskTimer(this, 0L, 2L);
-            }
-            case "flashbang" -> {
-                w.spawnParticle(Particle.FLASH, loc, 6);
-                w.playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_BLAST_FAR, 1.5f, 1.8f);
-                for (Entity e : w.getNearbyEntities(loc, 7.0, 5.0, 7.0)) {
-                    if (e instanceof Player p) {
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20 * 3, 1, false, false));
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 20 * 3, 0, false, false));
-                    }
-                }
-            }
-            case "molotov" -> {
-                for (int i = 0; i < 6; i++) {
-                    Location fl = loc.clone().add(
-                            ThreadLocalRandom.current().nextDouble(-1.8, 1.8),
-                            0,
-                            ThreadLocalRandom.current().nextDouble(-1.8, 1.8)
-                    );
-                    Block b = fl.getBlock();
-                    if (b.getType().isAir()) b.setType(Material.FIRE);
-                }
-                w.playSound(loc, Sound.ITEM_FIRECHARGE_USE, 1.2f, 1.0f);
-            }
+            event.getEntity().remove();
         }
     }
 
@@ -1173,6 +1306,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         UUID uid = event.getPlayer().getUniqueId();
         buildModePlayers.remove(uid);
         activeDefuses.remove(uid);
+        PrimedGrenade pg = primedByPlayer.remove(uid);
+        if (pg != null) pg.detonated = true;
         saveData();
     }
 
@@ -1200,6 +1335,15 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         playerTeam.clear();
         activeDefuses.clear();
         projKind.clear();
+
+        for (PrimedGrenade pg : primedByPlayer.values()) {
+            pg.detonated = true;
+            if (pg.thrownEntity != null && pg.thrownEntity.isValid()) {
+                pg.thrownEntity.remove();
+            }
+        }
+        primedByPlayer.clear();
+        primedByEntity.clear();
 
         if (bombFuseTask != null) {
             bombFuseTask.cancel();
