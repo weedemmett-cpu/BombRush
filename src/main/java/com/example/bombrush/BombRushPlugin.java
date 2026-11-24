@@ -1,7 +1,10 @@
 package com.example.bombrush;
 
+import net.md_5.bungee.api.ChatMessageType;
+import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.*;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
@@ -14,28 +17,27 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.FireworkExplodeEvent;
-import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.entity.ProjectileHitEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.*;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
-import org.bukkit.event.player.PlayerInteractEntityEvent;
-import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.*;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.PotionMeta;
+import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Transformation;
 import org.bukkit.util.Vector;
 import org.joml.AxisAngle4f;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.io.File;
@@ -45,7 +47,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor {
 
-    private static final String DEFUSE_GUI_TITLE = ChatColor.DARK_RED + "" + ChatColor.BOLD + "C4 Wiring Defusal";
+    private static final String DEFUSE_GUI_TITLE = ChatColor.DARK_RED + "" + ChatColor.BOLD + "C4 Wiring Defusal (10s)";
 
     public enum WeaponSlotType {
         PRIMARY,
@@ -55,25 +57,25 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
     public enum WeaponId {
         // Starter guns
-        ASSAULT_RIFLE("assault_rifle", "Assault Rifle", WeaponSlotType.PRIMARY, true, 0, Material.CROSSBOW, "iron_axe"),
-        PUMP_SHOTGUN("pump_shotgun", "Pump Shotgun", WeaponSlotType.PRIMARY, true, 0, Material.BOW, "mace"),
-        GLOCK("glock", "Glock", WeaponSlotType.SECONDARY, true, 0, Material.CROSSBOW, "flint_and_steel"),
-        DEAGLE("deagle", "Deagle", WeaponSlotType.SECONDARY, true, 0, Material.MACE, "netherite_sword"),
+        ASSAULT_RIFLE("assault_rifle", "Assault Rifle", WeaponSlotType.PRIMARY, true, 0, Material.CROSSBOW, "iron_axe", 30, 90, 44),
+        PUMP_SHOTGUN("pump_shotgun", "Pump Shotgun", WeaponSlotType.PRIMARY, true, 0, Material.BOW, "netherite_horse_armor", 6, 24, 50),
+        GLOCK("glock", "Glock", WeaponSlotType.SECONDARY, true, 0, Material.CROSSBOW, "netherite_hoe", 15, 60, 30),
+        DEAGLE("deagle", "Deagle", WeaponSlotType.SECONDARY, true, 0, Material.MACE, "iron_horse_armor", 7, 28, 36),
 
         // Unlockable roster guns (no musket, flintlock, or grenade launcher)
-        SNIPER("sniper", "Sniper", WeaponSlotType.PRIMARY, false, 150, Material.SPYGLASS, "spyglass"),
-        TEC_9("tec_9", "Tec-9", WeaponSlotType.SECONDARY, false, 100, Material.CROSSBOW, "repeater"),
-        SHORTY("shorty", "Shorty", WeaponSlotType.PRIMARY, false, 110, Material.BOW, "diamond_axe"),
-        BURST_RIFLE("burst_rifle", "Burst Rifle", WeaponSlotType.PRIMARY, false, 140, Material.CROSSBOW, "trident"),
-        REVOLVER("revolver", "Revolver", WeaponSlotType.SECONDARY, false, 125, Material.MACE, "blaze_rod"),
-        HARPOON_GUN("harpoon_gun", "Harpoon Gun", WeaponSlotType.PRIMARY, false, 160, Material.CROSSBOW, "fishing_rod"),
+        SNIPER("sniper", "Sniper", WeaponSlotType.PRIMARY, false, 150, Material.SPYGLASS, "spyglass", 5, 15, 56),
+        TEC_9("tec_9", "Tec-9", WeaponSlotType.SECONDARY, false, 100, Material.CROSSBOW, "repeater", 24, 72, 34),
+        SHORTY("shorty", "Shorty", WeaponSlotType.PRIMARY, false, 110, Material.BOW, "diamond_axe", 2, 12, 36),
+        BURST_RIFLE("burst_rifle", "Burst Rifle", WeaponSlotType.PRIMARY, false, 140, Material.CROSSBOW, "trident", 24, 72, 42),
+        REVOLVER("revolver", "Revolver", WeaponSlotType.SECONDARY, false, 125, Material.MACE, "iron_hoe", 6, 24, 40),
+        HARPOON_GUN("harpoon_gun", "Harpoon Gun", WeaponSlotType.PRIMARY, false, 160, Material.CROSSBOW, "fishing_rod", 1, 8, 32),
 
-        // Utilities
-        GRENADE("grenade", "Frag Grenade", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "ender_eye"),
-        SMOKE_GRENADE("smoke_grenade", "Smoke Grenade", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "gray_dye"),
-        FLASHBANG("flashbang", "Flashbang", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "glowstone_dust"),
-        MOLOTOV("molotov", "Molotov", WeaponSlotType.UTILITY, true, 0, Material.SPLASH_POTION, "fire_charge"),
-        KNIFE("knife", "Combat Knife", WeaponSlotType.UTILITY, true, 0, Material.IRON_SWORD, null);
+        // Utilities (1 throwable per round)
+        GRENADE("grenade", "Frag Grenade", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "ender_eye", 0, 0, 0),
+        SMOKE_GRENADE("smoke_grenade", "Smoke Grenade", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "clay_ball", 0, 0, 0),
+        FLASHBANG("flashbang", "Flashbang", WeaponSlotType.UTILITY, true, 0, Material.SNOWBALL, "ink_sac", 0, 0, 0),
+        MOLOTOV("molotov", "Molotov", WeaponSlotType.UTILITY, true, 0, Material.POTION, null, 0, 0, 0),
+        KNIFE("knife", "Combat Knife", WeaponSlotType.UTILITY, true, 0, Material.IRON_SWORD, null, 0, 0, 0);
 
         public final String id;
         public final String displayName;
@@ -82,8 +84,12 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         public final int cost;
         public final Material baseMaterial;
         public final String uniqueItemModel;
+        public final int magSize;
+        public final int reserveAmmo;
+        public final int reloadTicks;
 
-        WeaponId(String id, String displayName, WeaponSlotType slotType, boolean starter, int cost, Material baseMaterial, String uniqueItemModel) {
+        WeaponId(String id, String displayName, WeaponSlotType slotType, boolean starter, int cost,
+                 Material baseMaterial, String uniqueItemModel, int magSize, int reserveAmmo, int reloadTicks) {
             this.id = id;
             this.displayName = displayName;
             this.slotType = slotType;
@@ -91,6 +97,9 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             this.cost = cost;
             this.baseMaterial = baseMaterial;
             this.uniqueItemModel = uniqueItemModel;
+            this.magSize = magSize;
+            this.reserveAmmo = reserveAmmo;
+            this.reloadTicks = reloadTicks;
         }
 
         public boolean isGun() {
@@ -173,12 +182,13 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     private static class DefuseSession {
         final UUID playerId;
         final int targetWireSlot;
-        final ChatColor targetColor;
+        final long readyToCutAtMillis;
+        boolean unlocked = false;
 
-        DefuseSession(UUID playerId, int targetWireSlot, ChatColor targetColor) {
+        DefuseSession(UUID playerId, int targetWireSlot, long readyToCutAtMillis) {
             this.playerId = playerId;
             this.targetWireSlot = targetWireSlot;
-            this.targetColor = targetColor;
+            this.readyToCutAtMillis = readyToCutAtMillis;
         }
     }
 
@@ -187,7 +197,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         final WeaponId type;
         final long detonateAtMillis;
         Snowball thrownEntity;
-        Location lastKnownLoc;
+        Location landedLoc;
+        boolean landed = false;
         boolean thrown = false;
         boolean detonated = false;
 
@@ -214,13 +225,18 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     private int bombFuseSecondsLeft = 0;
     private BukkitRunnable bombFuseTask;
     private final Map<UUID, DefuseSession> activeDefuses = new HashMap<>();
+    private final Set<UUID> currentlyPlanting = new HashSet<>();
 
     private final Map<UUID, Long> fireCooldowns = new HashMap<>();
+    private final Set<UUID> reloadingPlayers = new HashSet<>();
     private final Map<UUID, String> projKind = new HashMap<>();
     private final Map<UUID, PrimedGrenade> primedByPlayer = new HashMap<>();
     private final Map<UUID, PrimedGrenade> primedByEntity = new HashMap<>();
+    private final Set<Location> molotovFireBlocks = new HashSet<>();
 
     private NamespacedKey keyWeaponId;
+    private NamespacedKey keyGunMag;
+    private NamespacedKey keyGunReserve;
     private NamespacedKey keyBombItem;
     private NamespacedKey keyBombDisplay;
 
@@ -230,6 +246,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     @Override
     public void onEnable() {
         keyWeaponId = new NamespacedKey(this, "br_weapon");
+        keyGunMag = new NamespacedKey(this, "br_gun_mag");
+        keyGunReserve = new NamespacedKey(this, "br_gun_reserve");
         keyBombItem = new NamespacedKey(this, "br_c4_item");
         keyBombDisplay = new NamespacedKey(this, "br_c4_display");
 
@@ -242,6 +260,31 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         }
 
         getServer().getPluginManager().registerEvents(this, this);
+
+        // Live action-bar ammo & reload HUD task
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    ItemStack main = p.getInventory().getItemInMainHand();
+                    WeaponId w = getWeapon(main);
+                    if (w != null && w.isGun()) {
+                        int mag = getMag(main, w);
+                        int res = getReserve(main, w);
+                        if (reloadingPlayers.contains(p.getUniqueId())) {
+                            sendActionBar(p, ChatColor.YELLOW + "RELOADING " + w.displayName + "... " + ChatColor.GRAY + "(" + mag + "/" + w.magSize + " | " + res + ")");
+                        } else {
+                            ChatColor magCol = (mag == 0) ? ChatColor.RED : (mag <= Math.max(1, w.magSize / 4) ? ChatColor.GOLD : ChatColor.GREEN);
+                            sendActionBar(p, ChatColor.AQUA + w.displayName + ChatColor.DARK_GRAY + " | "
+                                    + magCol + mag + ChatColor.GRAY + "/" + w.magSize
+                                    + ChatColor.DARK_GRAY + " | " + ChatColor.YELLOW + "Reserve: " + res
+                                    + ChatColor.GRAY + " [F to Reload]");
+                        }
+                    }
+                }
+            }
+        }.runTaskTimer(this, 5L, 5L);
+
         getLogger().info("BombRush 26.2 enabled!");
     }
 
@@ -254,6 +297,10 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             }
         }
         saveData();
+    }
+
+    private void sendActionBar(Player p, String msg) {
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, TextComponent.fromLegacyText(msg));
     }
 
     // ================= DATA PERSISTENCE =================
@@ -627,7 +674,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         roundNumber++;
         bombPlanted = false;
         plantedBombLoc = null;
-        bombFuseSecondsLeft = 35;
+        bombFuseSecondsLeft = 40;
 
         playerTeam.clear();
         bombCarrierId = null;
@@ -664,12 +711,11 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         Player carrier = planters.get(ThreadLocalRandom.current().nextInt(planters.size()));
         bombCarrierId = carrier.getUniqueId();
 
-        List<WeaponId> utilityPool = Arrays.asList(
+        List<WeaponId> throwables = Arrays.asList(
                 WeaponId.GRENADE,
                 WeaponId.SMOKE_GRENADE,
                 WeaponId.FLASHBANG,
-                WeaponId.MOLOTOV,
-                WeaponId.KNIFE
+                WeaponId.MOLOTOV
         );
 
         for (Player p : participants) {
@@ -695,25 +741,23 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
             WeaponId chosenPrimary = ownedPrimaries.get(ThreadLocalRandom.current().nextInt(ownedPrimaries.size()));
             WeaponId chosenSecondary = ownedSecondaries.get(ThreadLocalRandom.current().nextInt(ownedSecondaries.size()));
+            WeaponId chosenThrowable = throwables.get(ThreadLocalRandom.current().nextInt(throwables.size()));
 
             p.getInventory().addItem(buildWeaponItem(chosenPrimary));
             p.getInventory().addItem(buildWeaponItem(chosenSecondary));
-
-            List<WeaponId> utils = new ArrayList<>(utilityPool);
-            Collections.shuffle(utils);
-            p.getInventory().addItem(buildWeaponItem(utils.get(0)));
-            p.getInventory().addItem(buildWeaponItem(utils.get(1)));
+            p.getInventory().addItem(buildWeaponItem(WeaponId.KNIFE));
+            p.getInventory().addItem(buildWeaponItem(chosenThrowable));
 
             if (p.getUniqueId().equals(bombCarrierId)) {
                 p.getInventory().addItem(buildBombItem());
-                p.sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "YOU HAVE THE C4 BOMB! Plant it inside a Bomb Site!");
+                p.sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "YOU HAVE THE C4 BOMB! Right-click a surface in a Bomb Site (5s plant)!");
             }
 
             String team = playerTeam.get(p.getUniqueId());
             ChatColor tColor = "PLANTERS".equals(team) ? ChatColor.RED : ChatColor.AQUA;
             p.sendMessage(ChatColor.GOLD + "Round " + roundNumber + " on " + ChatColor.YELLOW + currentMap.name
                     + ChatColor.GOLD + " | Team: " + tColor + team
-                    + ChatColor.GRAY + " (" + chosenPrimary.displayName + " + " + chosenSecondary.displayName + ")");
+                    + ChatColor.GRAY + " (" + chosenPrimary.displayName + " + " + chosenSecondary.displayName + " + " + chosenThrowable.displayName + ")");
         }
 
         Bukkit.broadcastMessage(ChatColor.GOLD + "[BombRush] Round " + roundNumber + " started on random map '" + currentMap.name + "'!");
@@ -723,19 +767,30 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         ItemStack stack = new ItemStack(w.baseMaterial, 1);
         ItemMeta meta = stack.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName(ChatColor.YELLOW + w.displayName);
-            if (w.uniqueItemModel != null) {
+            if (w.isGun()) {
+                meta.setDisplayName(ChatColor.YELLOW + w.displayName + ChatColor.GRAY + " (" + w.magSize + "/" + w.magSize + ")");
+            } else {
+                meta.setDisplayName(ChatColor.YELLOW + w.displayName);
+            }
+
+            if (w == WeaponId.MOLOTOV && meta instanceof PotionMeta pm) {
+                pm.setColor(Color.fromRGB(16, 78, 32));
+            } else if (w.uniqueItemModel != null) {
                 meta.setItemModel(NamespacedKey.minecraft(w.uniqueItemModel));
             }
+
             List<String> lore = new ArrayList<>();
             if (w.isGun()) {
                 lore.add(ChatColor.GRAY + (w.slotType == WeaponSlotType.PRIMARY ? "Primary Gun" : "Secondary Gun"));
+                lore.add(ChatColor.GRAY + "Press F (Swap Hands) or Left-Click to Reload");
+                meta.getPersistentDataContainer().set(keyGunMag, PersistentDataType.INTEGER, w.magSize);
+                meta.getPersistentDataContainer().set(keyGunReserve, PersistentDataType.INTEGER, w.reserveAmmo);
             } else if (w.isGrenade()) {
-                lore.add(ChatColor.GRAY + "Right-click to prime (5s fuse), click again to throw");
+                lore.add(ChatColor.GRAY + "Right-click to prime (5s fuse), click again to throw (1 per round)");
             } else {
                 lore.add(ChatColor.GRAY + "Melee Weapon");
             }
-            if (w == WeaponId.SNIPER) lore.add(ChatColor.AQUA + "Right-click to ADS (Spyglass Zoom)");
+            if (w == WeaponId.SNIPER) lore.add(ChatColor.AQUA + "Right-click to ADS (Spyglass), Left-click to Shoot");
             if (w == WeaponId.HARPOON_GUN) lore.add(ChatColor.AQUA + "Crossbow Harpoon Launcher");
             meta.setLore(lore);
             meta.getPersistentDataContainer().set(keyWeaponId, PersistentDataType.STRING, w.id);
@@ -745,31 +800,152 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     }
 
     private ItemStack buildBombItem() {
-        ItemStack stack = new ItemStack(Material.TNT, 1);
+        ItemStack stack = new ItemStack(Material.GREEN_GLAZED_TERRACOTTA, 1);
         ItemMeta meta = stack.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(ChatColor.RED + "" + ChatColor.BOLD + "C4 Charge");
-            meta.setItemModel(NamespacedKey.minecraft("redstone_torch"));
-            meta.setLore(Collections.singletonList(ChatColor.GRAY + "Right-click inside a Bomb Site to plant"));
+            meta.setItemModel(NamespacedKey.minecraft("green_glazed_terracotta"));
+            meta.setLore(Collections.singletonList(ChatColor.GRAY + "Right-click a floor or wall inside a Bomb Site (5s to plant)"));
             meta.getPersistentDataContainer().set(keyBombItem, PersistentDataType.BYTE, (byte) 1);
             stack.setItemMeta(meta);
         }
         return stack;
     }
 
-    // ================= C4 BOMB (TNT BLOCK DISPLAY) & WIRING DEFUSAL =================
+    // ================= AMMO & RELOAD HELPERS =================
 
-    private void spawnC4BlockDisplay(Location loc) {
-        World w = loc.getWorld();
+    private int getMag(ItemStack item, WeaponId w) {
+        if (item == null || !item.hasItemMeta()) return w.magSize;
+        Integer val = item.getItemMeta().getPersistentDataContainer().get(keyGunMag, PersistentDataType.INTEGER);
+        return (val != null) ? val : w.magSize;
+    }
+
+    private int getReserve(ItemStack item, WeaponId w) {
+        if (item == null || !item.hasItemMeta()) return w.reserveAmmo;
+        Integer val = item.getItemMeta().getPersistentDataContainer().get(keyGunReserve, PersistentDataType.INTEGER);
+        return (val != null) ? val : w.reserveAmmo;
+    }
+
+    private void setAmmo(ItemStack item, WeaponId w, int mag, int reserve) {
+        if (item == null || !item.hasItemMeta()) return;
+        ItemMeta meta = item.getItemMeta();
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        pdc.set(keyGunMag, PersistentDataType.INTEGER, Math.max(0, mag));
+        pdc.set(keyGunReserve, PersistentDataType.INTEGER, Math.max(0, reserve));
+        meta.setDisplayName(ChatColor.YELLOW + w.displayName + ChatColor.GRAY + " (" + Math.max(0, mag) + "/" + w.magSize + ")");
+        item.setItemMeta(meta);
+    }
+
+    private void startReload(Player p, ItemStack gunItem, WeaponId w) {
+        if (gunItem == null || w == null || !w.isGun()) return;
+        UUID uid = p.getUniqueId();
+        if (reloadingPlayers.contains(uid)) return;
+
+        int curMag = getMag(gunItem, w);
+        int curRes = getReserve(gunItem, w);
+
+        if (curMag >= w.magSize) {
+            p.sendMessage(ChatColor.GRAY + w.displayName + " magazine is already full!");
+            return;
+        }
+        if (curRes <= 0) {
+            p.playSound(p.getLocation(), Sound.BLOCK_DISPENSER_FAIL, 1.0f, 1.5f);
+            p.sendMessage(ChatColor.RED + "No reserve ammo left for " + w.displayName + "!");
+            return;
+        }
+
+        reloadingPlayers.add(uid);
+        int heldSlot = p.getInventory().getHeldItemSlot();
+        p.playSound(p.getLocation(), Sound.ITEM_ARMOR_EQUIP_IRON, 1.0f, 1.2f);
+        p.sendMessage(ChatColor.YELLOW + "Reloading " + w.displayName + " (" + String.format("%.1fs", w.reloadTicks / 20.0) + ")...");
+
+        new BukkitRunnable() {
+            int elapsed = 0;
+
+            @Override
+            public void run() {
+                if (!p.isOnline() || !reloadingPlayers.contains(uid)) {
+                    reloadingPlayers.remove(uid);
+                    cancel();
+                    return;
+                }
+                // Cancel reload if player switched slots
+                if (p.getInventory().getHeldItemSlot() != heldSlot) {
+                    reloadingPlayers.remove(uid);
+                    p.sendMessage(ChatColor.RED + "Reload cancelled (switched item).");
+                    cancel();
+                    return;
+                }
+                elapsed += 2;
+                if (elapsed >= w.reloadTicks) {
+                    reloadingPlayers.remove(uid);
+                    ItemStack current = p.getInventory().getItem(heldSlot);
+                    if (current != null && getWeapon(current) == w) {
+                        int m = getMag(current, w);
+                        int r = getReserve(current, w);
+                        int needed = w.magSize - m;
+                        int toLoad = Math.min(needed, r);
+                        setAmmo(current, w, m + toLoad, r - toLoad);
+                        p.playSound(p.getLocation(), Sound.BLOCK_IRON_TRAPDOOR_CLOSE, 1.0f, 1.4f);
+                        p.sendMessage(ChatColor.GREEN + w.displayName + " reloaded! (" + (m + toLoad) + "/" + w.magSize + " | Reserve: " + (r - toLoad) + ")");
+                    }
+                    cancel();
+                }
+            }
+        }.runTaskTimer(this, 2L, 2L);
+    }
+
+    @EventHandler
+    public void onSwapHandsReload(PlayerSwapHandItemsEvent event) {
+        Player p = event.getPlayer();
+        ItemStack main = event.getOffHandItem(); // Bukkit swaps before event completes
+        WeaponId w = getWeapon(main);
+        if (w != null && w.isGun()) {
+            event.setCancelled(true);
+            startReload(p, p.getInventory().getItemInMainHand(), w);
+        }
+    }
+
+    // ================= C4 BOMB (GREEN GLAZED TERRACOTTA) & 5s PLANT / 10s DEFUSE =================
+
+    private void spawnC4BlockDisplay(Location surfaceCenter, BlockFace face) {
+        World w = surfaceCenter.getWorld();
         if (w == null) return;
-        BlockData tntData = Bukkit.createBlockData(Material.TNT);
-        BlockDisplay display = (BlockDisplay) w.spawnEntity(loc, EntityType.BLOCK_DISPLAY);
-        display.setBlock(tntData);
+        BlockData c4Data = Bukkit.createBlockData(Material.GREEN_GLAZED_TERRACOTTA);
+        BlockDisplay display = (BlockDisplay) w.spawnEntity(surfaceCenter, EntityType.BLOCK_DISPLAY);
+        display.setBlock(c4Data);
+
+        Vector3f scale = new Vector3f(0.65f, 0.22f, 0.45f);
+        Vector3f translation;
+        Quaternionf rotation = new Quaternionf();
+
+        switch (face) {
+            case UP -> translation = new Vector3f(-scale.x / 2f, 0.0f, -scale.z / 2f);
+            case DOWN -> translation = new Vector3f(-scale.x / 2f, -scale.y, -scale.z / 2f);
+            case NORTH -> {
+                rotation.rotateX((float) (-Math.PI / 2.0));
+                translation = new Vector3f(-scale.x / 2f, scale.z / 2f, -scale.y);
+            }
+            case SOUTH -> {
+                rotation.rotateX((float) (Math.PI / 2.0));
+                translation = new Vector3f(-scale.x / 2f, -scale.z / 2f, 0.0f);
+            }
+            case WEST -> {
+                rotation.rotateZ((float) (Math.PI / 2.0));
+                translation = new Vector3f(0.0f, -scale.x / 2f, -scale.z / 2f);
+            }
+            case EAST -> {
+                rotation.rotateZ((float) (-Math.PI / 2.0));
+                translation = new Vector3f(-scale.y, -scale.x / 2f, -scale.z / 2f);
+            }
+            default -> translation = new Vector3f(-scale.x / 2f, 0.0f, -scale.z / 2f);
+        }
+
         display.setTransformation(new Transformation(
-                new Vector3f(-0.35f, 0.0f, -0.25f),
-                new AxisAngle4f(),
-                new Vector3f(0.70f, 0.28f, 0.50f),
-                new AxisAngle4f()
+                translation,
+                rotation,
+                scale,
+                new Quaternionf()
         ));
         display.getPersistentDataContainer().set(keyBombDisplay, PersistentDataType.BYTE, (byte) 1);
         plantedBombDisplayId = display.getUniqueId();
@@ -783,12 +959,78 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         return false;
     }
 
-    private void plantC4(Player planter) {
+    private void startPlantingC4(Player planter, Block clickedBlock, BlockFace clickedFace) {
         if (bombPlanted || !roundActive) return;
-        if (!isInsideAnyBombSite(planter.getLocation())) {
+        UUID uid = planter.getUniqueId();
+        if (currentlyPlanting.contains(uid)) return;
+
+        Location targetSurface;
+        BlockFace finalFace;
+        if (clickedBlock != null && clickedFace != null && clickedBlock.getType().isSolid()) {
+            finalFace = clickedFace;
+            targetSurface = clickedBlock.getLocation().add(
+                    0.5 + clickedFace.getModX() * 0.5,
+                    0.5 + clickedFace.getModY() * 0.5,
+                    0.5 + clickedFace.getModZ() * 0.5
+            );
+        } else {
+            finalFace = BlockFace.UP;
+            Block below = planter.getLocation().getBlock().getRelative(BlockFace.DOWN);
+            double groundY = below.getType().isSolid() ? (below.getY() + 1.0) : planter.getLocation().getY();
+            targetSurface = new Location(planter.getWorld(), planter.getLocation().getX(), groundY, planter.getLocation().getZ());
+        }
+
+        if (!isInsideAnyBombSite(planter.getLocation()) && !isInsideAnyBombSite(targetSurface)) {
             planter.sendMessage(ChatColor.RED + "You must be inside a Bomb Site to plant the C4!");
             return;
         }
+
+        currentlyPlanting.add(uid);
+        Location startLoc = planter.getLocation().clone();
+        planter.sendMessage(ChatColor.GOLD + "Planting C4... Hold still for 5 seconds!");
+        planter.playSound(planter.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1.2f, 1.0f);
+
+        new BukkitRunnable() {
+            int ticks = 0;
+
+            @Override
+            public void run() {
+                if (!roundActive || bombPlanted || !planter.isOnline() || planter.isDead()) {
+                    currentlyPlanting.remove(uid);
+                    cancel();
+                    return;
+                }
+                if (planter.getLocation().distanceSquared(startLoc) > 2.25) {
+                    currentlyPlanting.remove(uid);
+                    planter.sendMessage(ChatColor.RED + "Plant cancelled! Stay still while planting C4.");
+                    cancel();
+                    return;
+                }
+                if (!isBombItem(planter.getInventory().getItemInMainHand())) {
+                    currentlyPlanting.remove(uid);
+                    planter.sendMessage(ChatColor.RED + "Plant cancelled! Keep the C4 in your hand.");
+                    cancel();
+                    return;
+                }
+
+                ticks += 5;
+                if (ticks % 20 == 0) {
+                    int secLeft = Math.max(0, (100 - ticks) / 20);
+                    planter.sendMessage(ChatColor.YELLOW + "Planting C4... " + secLeft + "s");
+                    planter.playSound(planter.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1.0f, 1.2f);
+                }
+
+                if (ticks >= 100) {
+                    currentlyPlanting.remove(uid);
+                    finishPlantC4(planter, targetSurface, finalFace);
+                    cancel();
+                }
+            }
+        }.runTaskTimer(this, 5L, 5L);
+    }
+
+    private void finishPlantC4(Player planter, Location surfaceLoc, BlockFace face) {
+        if (bombPlanted || !roundActive) return;
 
         for (ItemStack item : planter.getInventory().getContents()) {
             if (isBombItem(item)) {
@@ -798,8 +1040,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         }
 
         bombPlanted = true;
-        plantedBombLoc = planter.getLocation().getBlock().getLocation().add(0.5, 0.1, 0.5);
-        spawnC4BlockDisplay(plantedBombLoc);
+        plantedBombLoc = surfaceLoc.clone();
+        spawnC4BlockDisplay(plantedBombLoc, face);
         rewardCoins(planter.getUniqueId(), 50, "Planting C4");
 
         Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[BombRush] C4 PLANTED by " + planter.getName() + "! Defusers have " + bombFuseSecondsLeft + "s!");
@@ -815,7 +1057,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 bombFuseSecondsLeft--;
                 if (plantedBombLoc != null && plantedBombLoc.getWorld() != null) {
                     plantedBombLoc.getWorld().playSound(plantedBombLoc, Sound.BLOCK_NOTE_BLOCK_BIT, 1.2f, bombFuseSecondsLeft <= 5 ? 2.0f : 1.0f);
-                    plantedBombLoc.getWorld().spawnParticle(Particle.FLAME, plantedBombLoc.clone().add(0, 0.3, 0), 4, 0.1, 0.1, 0.1, 0.01);
+                    plantedBombLoc.getWorld().spawnParticle(Particle.FLAME, plantedBombLoc.clone().add(0, 0.25, 0), 4, 0.08, 0.08, 0.08, 0.01);
                 }
                 if (bombFuseSecondsLeft <= 0) {
                     detonateC4();
@@ -855,23 +1097,57 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             ItemMeta meta = wire.getItemMeta();
             if (meta != null) {
                 meta.setDisplayName(colors[i] + "Cut " + mats[i].name().replace("_WOOL", "") + " Wire");
-                meta.setLore(Collections.singletonList(ChatColor.GRAY + "Click to cut this wire"));
+                meta.setLore(Collections.singletonList(ChatColor.GRAY + "Wait for the 10s wiring scan, then click!"));
                 wire.setItemMeta(meta);
             }
             inv.setItem(slots[i], wire);
         }
 
-        ItemStack prompt = new ItemStack(Material.COMPARATOR, 1);
+        long readyAt = System.currentTimeMillis() + 10_000L;
+        DefuseSession session = new DefuseSession(defuser.getUniqueId(), slots[chosenIdx], readyAt);
+        activeDefuses.put(defuser.getUniqueId(), session);
+
+        updateDefusePromptItem(inv, colors[chosenIdx], mats[chosenIdx], 10);
+        defuser.openInventory(inv);
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!bombPlanted || !defuser.isOnline() || !activeDefuses.containsKey(defuser.getUniqueId())) {
+                    cancel();
+                    return;
+                }
+                if (!defuser.getOpenInventory().getTitle().equals(DEFUSE_GUI_TITLE)) {
+                    activeDefuses.remove(defuser.getUniqueId());
+                    cancel();
+                    return;
+                }
+                long remMs = session.readyToCutAtMillis - System.currentTimeMillis();
+                int remSec = (int) Math.max(0, Math.ceil(remMs / 1000.0));
+                updateDefusePromptItem(inv, colors[chosenIdx], mats[chosenIdx], remSec);
+                if (remMs <= 0) {
+                    session.unlocked = true;
+                    defuser.playSound(defuser.getLocation(), Sound.BLOCK_NOTE_BLOCK_PLING, 1.2f, 1.7f);
+                    cancel();
+                }
+            }
+        }.runTaskTimer(this, 10L, 10L);
+    }
+
+    private void updateDefusePromptItem(Inventory inv, ChatColor wireColor, Material wireMat, int secondsLeft) {
+        ItemStack prompt = new ItemStack(secondsLeft > 0 ? Material.CLOCK : Material.COMPARATOR, 1);
         ItemMeta pMeta = prompt.getItemMeta();
         if (pMeta != null) {
-            pMeta.setDisplayName(ChatColor.GOLD + "Target Wire: " + colors[chosenIdx] + mats[chosenIdx].name().replace("_WOOL", ""));
-            pMeta.setLore(Collections.singletonList(ChatColor.GRAY + "Click the matching wire quickly!"));
+            if (secondsLeft > 0) {
+                pMeta.setDisplayName(ChatColor.RED + "Tracing Circuit... " + secondsLeft + "s left");
+                pMeta.setLore(Collections.singletonList(ChatColor.GRAY + "Do not cut before the timer reaches 0s!"));
+            } else {
+                pMeta.setDisplayName(ChatColor.GOLD + "READY! Cut Wire: " + wireColor + wireMat.name().replace("_WOOL", ""));
+                pMeta.setLore(Collections.singletonList(ChatColor.GREEN + "Click the matching wire now!"));
+            }
             prompt.setItemMeta(pMeta);
         }
         inv.setItem(4, prompt);
-
-        activeDefuses.put(defuser.getUniqueId(), new DefuseSession(defuser.getUniqueId(), slots[chosenIdx], colors[chosenIdx]));
-        defuser.openInventory(inv);
     }
 
     @EventHandler
@@ -888,6 +1164,12 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
         int slot = event.getRawSlot();
         if (slot != 11 && slot != 13 && slot != 15) return;
+
+        if (!session.unlocked && System.currentTimeMillis() < session.readyToCutAtMillis) {
+            p.sendMessage(ChatColor.RED + "Wait until the 10-second circuit trace finishes before cutting a wire!");
+            p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_BASS, 1.0f, 0.6f);
+            return;
+        }
 
         activeDefuses.remove(p.getUniqueId());
         p.closeInventory();
@@ -930,6 +1212,13 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     }
 
     @EventHandler
+    public void onBlockPlace(BlockPlaceEvent event) {
+        if (isBombItem(event.getItemInHand())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
     public void onEntityInteract(PlayerInteractEntityEvent event) {
         if (event.getRightClicked() instanceof BlockDisplay bd
                 && bd.getPersistentDataContainer().has(keyBombDisplay, PersistentDataType.BYTE)) {
@@ -953,7 +1242,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
         if (isBombItem(hand) && (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK)) {
             event.setCancelled(true);
-            plantC4(p);
+            startPlantingC4(p, event.getClickedBlock(), event.getBlockFace());
             return;
         }
 
@@ -969,14 +1258,35 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             return;
         }
 
-        // Sniper is the ONLY gun that can ADS via spyglass
+        // Left-click reloads non-sniper guns; for Sniper, left-click shoots (or reloads if mag is 0)
+        if (act == Action.LEFT_CLICK_AIR || act == Action.LEFT_CLICK_BLOCK) {
+            if (w == WeaponId.SNIPER) {
+                if (reloadingPlayers.contains(p.getUniqueId())) return;
+                int mag = getMag(hand, w);
+                if (mag <= 0) {
+                    startReload(p, hand, w);
+                    return;
+                }
+                long now = System.currentTimeMillis();
+                long cd = fireCooldowns.getOrDefault(p.getUniqueId(), 0L);
+                if (now < cd) return;
+                fireCooldowns.put(p.getUniqueId(), now + 950L);
+                setAmmo(hand, w, mag - 1, getReserve(hand, w));
+                fireHitscan(p, w, 24.0, 90, 0.002);
+                if (mag - 1 == 0 && getReserve(hand, w) > 0) {
+                    startReload(p, hand, w);
+                }
+            } else if (w.isGun()) {
+                startReload(p, hand, w);
+            }
+            return;
+        }
+
+        // Sniper right-click = ADS via spyglass
         if (w == WeaponId.SNIPER) {
             if (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK) {
                 p.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 25, 2, false, false));
                 p.playSound(p.getLocation(), Sound.ITEM_SPYGLASS_USE, 0.9f, 1.1f);
-            }
-            if (act == Action.LEFT_CLICK_AIR || act == Action.LEFT_CLICK_BLOCK) {
-                fireHitscan(p, w, 24.0, 90, 0.002);
             }
             return;
         }
@@ -987,45 +1297,57 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         }
 
         if (act != Action.RIGHT_CLICK_AIR && act != Action.RIGHT_CLICK_BLOCK) return;
+        if (!w.isGun()) return;
+
+        if (reloadingPlayers.contains(p.getUniqueId())) return;
 
         long now = System.currentTimeMillis();
         long cd = fireCooldowns.getOrDefault(p.getUniqueId(), 0L);
+        if (now < cd) return;
+
+        int mag = getMag(hand, w);
+        int res = getReserve(hand, w);
+        if (mag <= 0) {
+            startReload(p, hand, w);
+            return;
+        }
 
         switch (w) {
             case ASSAULT_RIFLE -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 140L);
+                setAmmo(hand, w, mag - 1, res);
                 fireHitscan(p, w, 6.5, 55, 0.025);
             }
             case GLOCK -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 190L);
+                setAmmo(hand, w, mag - 1, res);
                 fireHitscan(p, w, 5.0, 45, 0.02);
             }
             case DEAGLE -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 420L);
+                setAmmo(hand, w, mag - 1, res);
                 fireHitscan(p, w, 12.5, 50, 0.015);
             }
             case TEC_9 -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 110L);
+                setAmmo(hand, w, mag - 1, res);
                 fireHitscan(p, w, 4.5, 40, 0.045);
             }
             case REVOLVER -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 480L);
+                setAmmo(hand, w, mag - 1, res);
                 fireHitscan(p, w, 13.5, 50, 0.012);
             }
             case BURST_RIFLE -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 450L);
+                int burstCount = Math.min(3, mag);
+                setAmmo(hand, w, mag - burstCount, res);
                 new BukkitRunnable() {
                     int shots = 0;
 
                     @Override
                     public void run() {
-                        if (shots++ >= 3 || !p.isOnline()) {
+                        if (shots++ >= burstCount || !p.isOnline()) {
                             cancel();
                             return;
                         }
@@ -1034,37 +1356,41 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 }.runTaskTimer(this, 0L, 2L);
             }
             case PUMP_SHOTGUN -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 750L);
+                setAmmo(hand, w, mag - 1, res);
                 for (int i = 0; i < 7; i++) {
                     fireHitscan(p, w, 3.8, 22, 0.095);
                 }
             }
             case SHORTY -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 650L);
+                setAmmo(hand, w, mag - 1, res);
                 for (int i = 0; i < 5; i++) {
                     fireHitscan(p, w, 3.5, 16, 0.12);
                 }
             }
             case HARPOON_GUN -> {
-                if (now < cd) return;
                 fireCooldowns.put(p.getUniqueId(), now + 700L);
+                setAmmo(hand, w, mag - 1, res);
                 launchHarpoon(p);
             }
             default -> {
             }
+        }
+
+        int updatedMag = getMag(hand, w);
+        if (updatedMag <= 0 && getReserve(hand, w) > 0) {
+            startReload(p, hand, w);
         }
     }
 
     private void handleGrenadeInteract(Player p, ItemStack hand, WeaponId util) {
         PrimedGrenade existing = primedByPlayer.get(p.getUniqueId());
 
-        // First interact: arm the grenade and start the 5-second fuse
         if (existing == null || existing.detonated) {
             long detonateAt = System.currentTimeMillis() + 5000L;
             PrimedGrenade pg = new PrimedGrenade(p.getUniqueId(), util, detonateAt);
-            pg.lastKnownLoc = p.getLocation().clone();
+            pg.landedLoc = p.getLocation().clone();
             primedByPlayer.put(p.getUniqueId(), pg);
 
             p.sendMessage(ChatColor.RED + util.displayName + " primed! 5s fuse — interact again to throw!");
@@ -1077,28 +1403,27 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                         cancel();
                         return;
                     }
-                    if (pg.thrown && pg.thrownEntity != null && pg.thrownEntity.isValid()) {
-                        pg.lastKnownLoc = pg.thrownEntity.getLocation().clone();
-                    } else {
+                    if (!pg.thrown) {
                         Player owner = Bukkit.getPlayer(pg.ownerId);
                         if (owner != null && owner.isOnline()) {
-                            pg.lastKnownLoc = owner.getLocation().clone();
+                            pg.landedLoc = owner.getLocation().clone();
                         }
+                    } else if (!pg.landed && pg.thrownEntity != null && pg.thrownEntity.isValid()) {
+                        pg.landedLoc = pg.thrownEntity.getLocation().clone();
                     }
 
                     long remainingMs = pg.detonateAtMillis - System.currentTimeMillis();
                     if (remainingMs <= 0) {
                         triggerGrenadeEffect(pg);
                         cancel();
-                    } else if (pg.lastKnownLoc != null && pg.lastKnownLoc.getWorld() != null) {
-                        pg.lastKnownLoc.getWorld().spawnParticle(Particle.SMOKE, pg.lastKnownLoc.clone().add(0, 0.25, 0), 2, 0.08, 0.08, 0.08, 0.01);
+                    } else if (pg.landedLoc != null && pg.landedLoc.getWorld() != null) {
+                        pg.landedLoc.getWorld().spawnParticle(Particle.SMOKE, pg.landedLoc.clone().add(0, 0.2, 0), 2, 0.06, 0.06, 0.06, 0.01);
                     }
                 }
             }.runTaskTimer(this, 0L, 2L);
             return;
         }
 
-        // Second interact (before throwing): throw the already-primed grenade
         if (!existing.thrown && existing.type == util) {
             existing.thrown = true;
             if (p.getGameMode() != GameMode.CREATIVE && hand != null) {
@@ -1107,7 +1432,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             p.getWorld().playSound(p.getLocation(), Sound.ENTITY_SNOWBALL_THROW, 1.0f, 1.1f);
             Snowball sb = p.launchProjectile(Snowball.class, p.getEyeLocation().getDirection().normalize().multiply(1.35));
             existing.thrownEntity = sb;
-            existing.lastKnownLoc = sb.getLocation().clone();
+            existing.landedLoc = sb.getLocation().clone();
             primedByEntity.put(sb.getUniqueId(), existing);
             p.sendMessage(ChatColor.YELLOW + "Threw " + util.displayName + "! Detonates when the 5s timer finishes.");
         }
@@ -1121,12 +1446,12 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         if (pg.thrownEntity != null) {
             primedByEntity.remove(pg.thrownEntity.getUniqueId());
             if (pg.thrownEntity.isValid()) {
-                pg.lastKnownLoc = pg.thrownEntity.getLocation().clone();
+                pg.landedLoc = pg.thrownEntity.getLocation().clone();
                 pg.thrownEntity.remove();
             }
         }
 
-        Location loc = pg.lastKnownLoc;
+        Location loc = pg.landedLoc;
         if (loc == null || loc.getWorld() == null) return;
         World w = loc.getWorld();
 
@@ -1137,34 +1462,70 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
                 @Override
                 public void run() {
-                    if (ticks++ > 120) {
+                    if (ticks++ > 180) {
                         cancel();
                         return;
                     }
-                    w.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc, 18, 2.2, 1.2, 2.2, 0.01);
+                    w.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc.clone().add(0, 1.2, 0), 55, 2.8, 1.6, 2.8, 0.005);
+                    w.spawnParticle(Particle.LARGE_SMOKE, loc.clone().add(0, 1.0, 0), 35, 2.5, 1.4, 2.5, 0.01);
                 }
             }.runTaskTimer(this, 0L, 2L);
             case FLASHBANG -> {
-                w.spawnParticle(Particle.FLASH, loc, 6);
-                w.playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_BLAST_FAR, 1.5f, 1.8f);
-                for (Entity e : w.getNearbyEntities(loc, 7.0, 5.0, 7.0)) {
+                w.spawnParticle(Particle.FLASH, loc.clone().add(0, 0.5, 0), 12, 0.4, 0.4, 0.4, 0);
+                w.playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_BLAST_FAR, 2.0f, 1.9f);
+                for (Entity e : w.getNearbyEntities(loc, 10.0, 6.0, 10.0)) {
                     if (e instanceof Player p) {
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20 * 3, 1, false, false));
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 20 * 3, 0, false, false));
+                        p.sendTitle(ChatColor.WHITE + "" + ChatColor.BOLD + "██████████", ChatColor.GRAY + "FLASHED!", 0, 45, 20);
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20 * 4, 2, false, false, false));
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20 * 3, 2, false, false, false));
+                        p.playSound(p.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 1.5f, 2.0f);
                     }
                 }
             }
             case MOLOTOV -> {
-                for (int i = 0; i < 6; i++) {
+                List<Location> spawned = new ArrayList<>();
+                for (int i = 0; i < 10; i++) {
                     Location fl = loc.clone().add(
-                            ThreadLocalRandom.current().nextDouble(-1.8, 1.8),
+                            ThreadLocalRandom.current().nextDouble(-2.2, 2.2),
                             0,
-                            ThreadLocalRandom.current().nextDouble(-1.8, 1.8)
+                            ThreadLocalRandom.current().nextDouble(-2.2, 2.2)
                     );
                     Block b = fl.getBlock();
-                    if (b.getType().isAir()) b.setType(Material.FIRE);
+                    if (b.getType().isAir() || b.getType() == Material.FIRE) {
+                        b.setType(Material.SOUL_FIRE);
+                        Location bLoc = b.getLocation();
+                        molotovFireBlocks.add(bLoc);
+                        spawned.add(bLoc);
+                    }
                 }
-                w.playSound(loc, Sound.ITEM_FIRECHARGE_USE, 1.2f, 1.0f);
+                w.playSound(loc, Sound.ITEM_FIRECHARGE_USE, 1.4f, 0.9f);
+
+                // Soul-fire burn damage (2.0 HP every 0.5s, matching soul fire) for 7 seconds
+                new BukkitRunnable() {
+                    int ticks = 0;
+
+                    @Override
+                    public void run() {
+                        if (ticks++ >= 14) {
+                            for (Location bLoc : spawned) {
+                                molotovFireBlocks.remove(bLoc);
+                                if (bLoc.getBlock().getType() == Material.SOUL_FIRE) {
+                                    bLoc.getBlock().setType(Material.AIR);
+                                }
+                            }
+                            cancel();
+                            return;
+                        }
+                        for (Location bLoc : spawned) {
+                            for (Entity e : w.getNearbyEntities(bLoc.clone().add(0.5, 0.5, 0.5), 0.7, 1.0, 0.7)) {
+                                if (e instanceof LivingEntity le && !(e instanceof Display)) {
+                                    le.setFireTicks(60);
+                                    le.damage(2.0);
+                                }
+                            }
+                        }
+                    }
+                }.runTaskTimer(this, 5L, 10L);
             }
             default -> {
             }
@@ -1232,19 +1593,22 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
     @EventHandler
     public void onProjectileHit(ProjectileHitEvent event) {
-        PrimedGrenade pg = primedByEntity.get(event.getEntity().getUniqueId());
+        PrimedGrenade pg = primedByEntity.remove(event.getEntity().getUniqueId());
         if (pg != null) {
-            // Do NOT explode on impact; keep ticking until the 5-second timer expires
-            pg.lastKnownLoc = event.getEntity().getLocation().clone();
+            // Lock landing spot where it hit so it never snaps back to the player
+            Location hitLoc = event.getEntity().getLocation().clone();
+            if (event.getHitBlock() != null && event.getHitBlockFace() != null) {
+                hitLoc = event.getHitBlock().getRelative(event.getHitBlockFace()).getLocation().add(0.5, 0.1, 0.5);
+            }
+            pg.landedLoc = hitLoc;
+            pg.landed = true;
+            pg.thrownEntity = null;
+            event.getEntity().remove();
             return;
         }
 
         String kind = projKind.remove(event.getEntity().getUniqueId());
         if (kind == null) return;
-
-        Location loc = event.getEntity().getLocation();
-        World w = loc.getWorld();
-        if (w == null) return;
 
         if ("harpoon".equals(kind)) {
             if (event.getHitEntity() instanceof LivingEntity target && event.getEntity().getShooter() instanceof Player shooter) {
@@ -1306,6 +1670,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         UUID uid = event.getPlayer().getUniqueId();
         buildModePlayers.remove(uid);
         activeDefuses.remove(uid);
+        currentlyPlanting.remove(uid);
+        reloadingPlayers.remove(uid);
         PrimedGrenade pg = primedByPlayer.remove(uid);
         if (pg != null) pg.detonated = true;
         saveData();
@@ -1334,7 +1700,16 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         bombCarrierId = null;
         playerTeam.clear();
         activeDefuses.clear();
+        currentlyPlanting.clear();
+        reloadingPlayers.clear();
         projKind.clear();
+
+        for (Location bLoc : molotovFireBlocks) {
+            if (bLoc.getWorld() != null && bLoc.getBlock().getType() == Material.SOUL_FIRE) {
+                bLoc.getBlock().setType(Material.AIR);
+            }
+        }
+        molotovFireBlocks.clear();
 
         for (PrimedGrenade pg : primedByPlayer.values()) {
             pg.detonated = true;
