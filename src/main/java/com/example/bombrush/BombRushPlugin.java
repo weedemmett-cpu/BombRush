@@ -305,7 +305,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                     }
                     String team = playerTeam.get(specId);
                     Player targetTeammate = findLiveTeammate(team, specId);
-                    if (targetTeammate != null) {
+                    if (targetTeammate != null && spec.getGameMode() == GameMode.SPECTATOR) {
                         if (spec.getSpectatorTarget() == null || !spec.getSpectatorTarget().equals(targetTeammate)) {
                             spec.teleport(targetTeammate.getLocation());
                             spec.setSpectatorTarget(targetTeammate);
@@ -906,8 +906,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
         for (int i = 0; i < participants.size(); i++) {
             Player p = participants.get(i);
-            p.setSpectatorTarget(null);
             if (p.getGameMode() == GameMode.SPECTATOR) {
+                p.setSpectatorTarget(null);
                 p.setGameMode(GameMode.SURVIVAL);
             }
             p.getInventory().clear();
@@ -2012,7 +2012,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 if (!dead.isOnline() || !roundActive || !spectators.contains(deadId)) return;
                 dead.spigot().respawn();
                 dead.setGameMode(GameMode.SPECTATOR);
-                if (mate != null) {
+                if (mate != null && dead.getGameMode() == GameMode.SPECTATOR) {
                     dead.teleport(mate.getLocation());
                     dead.setSpectatorTarget(mate);
                     dead.sendMessage(ChatColor.GRAY + "You died! Spectating teammate " + ChatColor.YELLOW + mate.getName() + ChatColor.GRAY + ".");
@@ -2082,9 +2082,11 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         projKind.clear();
 
         for (Player p : Bukkit.getOnlinePlayers()) {
-            p.setSpectatorTarget(null);
-            if (p.getGameMode() == GameMode.SPECTATOR && !p.isOp()) {
-                p.setGameMode(GameMode.SURVIVAL);
+            if (p.getGameMode() == GameMode.SPECTATOR) {
+                p.setSpectatorTarget(null);
+                if (!p.isOp()) {
+                    p.setGameMode(GameMode.SURVIVAL);
+                }
             }
         }
 
