@@ -217,10 +217,13 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     private final Set<UUID> buildModePlayers = new HashSet<>();
 
     private final Map<UUID, String> playerTeam = new HashMap<>();
+    private final Set<UUID> alivePlayers = new HashSet<>();
+    private final Set<UUID> spectators = new HashSet<>();
     private UUID bombCarrierId;
     private boolean roundActive = false;
     private int roundNumber = 0;
     private BombMap currentMap;
+    private BukkitRunnable nextRoundTask;
 
     private boolean bombPlanted = false;
     private Location plantedBombLoc;
@@ -269,6 +272,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             @Override
             public void run() {
                 for (Player p : Bukkit.getOnlinePlayers()) {
+                    if (spectators.contains(p.getUniqueId())) continue;
                     ItemStack main = p.getInventory().getItemInMainHand();
                     WeaponId w = getWeapon(main);
                     if (w != null && w.isGun()) {
@@ -289,18 +293,102 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             }
         }.runTaskTimer(this, 5L, 5L);
 
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!roundActive || spectators.isEmpty()) return;
+                for (UUID specId : new ArrayList<>(spectators)) {
+                    Player spec = Bukkit.getPlayer(specId);
+                    if (spec == null || !spec.isOnline()) continue;
+                    if (spec.getGameMode() != GameMode.SPECTATOR) {
+                        spec.setGameMode(GameMode.SPECTATOR);
+                    }
+                    String team = playerTeam.get(specId);
+                    Player targetTeammate = findLiveTeammate(team, specId);
+                    if (targetTeammate != null) {
+                        if (spec.getSpectatorTarget() == null || !spec.getSpectatorTarget().equals(targetTeammate)) {
+                            spec.teleport(targetTeammate.getLocation());
+                            spec.setSpectatorTarget(targetTeammate);
+                        }
+                    }
+                }
+            }
+        }.runTaskTimer(this, 10L, 10L);
+
         getLogger().info("BombRush 26.2 enabled!");
     }
 
     @Override
     public void onDisable() {
+        cancelNextRoundTimer();
         endRoundCleanup(true);
         for (Player p : Bukkit.getOnlinePlayers()) {
             if (p.getGameMode() == GameMode.CREATIVE && buildModePlayers.contains(p.getUniqueId())) {
                 p.setGameMode(GameMode.SURVIVAL);
+            } else if (p.getGameMode() == GameMode.SPECTATOR && !p.isOp()) {
+                p.setGameMode(GameMode.SURVIVAL);
             }
         }
         saveData();
+    }
+
+    private void cancelNextRoundTimer() {
+        if (nextRoundTask != null) {
+            nextRoundTask.cancel();
+            nextRoundTask = null;
+        }
+    }
+
+    private void scheduleNextRoundAfterBreak() {
+        cancelNextRoundTimer();
+        Bukkit.broadcastMessage(ChatColor.GOLD + "[BombRush] 5s break before the next round...");
+        nextRoundTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                nextRoundTask = null;
+                startRandomRound();
+            }
+        };
+        nextRoundTask.runTaskLater(this, 20L * 5);
+    }
+
+    private Player findLiveTeammate(String team, UUID excludeId) {
+        if (team == null) return null;
+        for (UUID aliveId : alivePlayers) {
+            if (aliveId.equals(excludeId)) continue;
+            if (team.equals(playerTeam.get(aliveId))) {
+                Player mate = Bukkit.getPlayer(aliveId);
+                if (mate != null && mate.isOnline() && !mate.isDead()) {
+                    return mate;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void checkTeamEliminationWin() {
+        if (!roundActive || bombPlanted) return;
+        int alivePlanters = 0;
+        int aliveDefusers = 0;
+        for (UUID uid : alivePlayers) {
+            Player p = Bukkit.getPlayer(uid);
+            if (p == null || !p.isOnline() || p.isDead()) continue;
+            String team = playerTeam.get(uid);
+            if ("PLANTERS".equals(team)) alivePlanters++;
+            else if ("DEFUSERS".equals(team)) aliveDefusers++;
+        }
+
+        if (alivePlanters == 0 && aliveDefusers > 0) {
+            awardTeamCoins("DEFUSERS", 65, "Eliminating Planters");
+            Bukkit.broadcastMessage(ChatColor.AQUA + "" + ChatColor.BOLD + "[BombRush] All Planters eliminated! DEFUSERS WIN THE ROUND!");
+            endRoundCleanup(true);
+            scheduleNextRoundAfterBreak();
+        } else if (aliveDefusers == 0 && alivePlanters > 0) {
+            awardTeamCoins("PLANTERS", 65, "Eliminating Defusers");
+            Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[BombRush] All Defusers eliminated! PLANTERS WIN THE ROUND!");
+            endRoundCleanup(true);
+            scheduleNextRoundAfterBreak();
+        }
     }
 
     private void sendActionBar(Player p, String msg) {
@@ -434,7 +522,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         if (args.length == 0 || args[0].equalsIgnoreCase("help")) {
             sender.sendMessage(ChatColor.GOLD + "=== BombRush Commands (No Lobby) ===");
             sender.sendMessage(ChatColor.YELLOW + "/br round" + ChatColor.GRAY + " - Start a new random-map round (OP)");
-            sender.sendMessage(ChatColor.YELLOW + "/br stop" + ChatColor.GRAY + " - Stop current round (OP)");
+            sender.sendMessage(ChatColor.YELLOW + "/br stop" + ChatColor.GRAY + " - Stop current round & auto-loop (OP)");
             sender.sendMessage(ChatColor.YELLOW + "/br build" + ChatColor.GRAY + " - Toggle Creative build mode (OP only)");
             sender.sendMessage(ChatColor.YELLOW + "/br items" + ChatColor.GRAY + " - Open OP item testing panel (OP only)");
             sender.sendMessage(ChatColor.YELLOW + "/br map <create|setplanters|setdefusers|addsite|list> <map>" + ChatColor.GRAY + " - Set spawns & bomb sites via WorldEdit (OP)");
@@ -476,6 +564,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                     sender.sendMessage(ChatColor.RED + "OP required to start a round.");
                     return true;
                 }
+                cancelNextRoundTimer();
                 startRandomRound();
             }
             case "stop" -> {
@@ -483,6 +572,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                     sender.sendMessage(ChatColor.RED + "OP required to stop a round.");
                     return true;
                 }
+                cancelNextRoundTimer();
                 endRoundCleanup(true);
                 Bukkit.broadcastMessage(ChatColor.RED + "[BombRush] Round stopped.");
             }
@@ -775,6 +865,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     // ================= RANDOM ROUND & LOADOUTS =================
 
     public void startRandomRound() {
+        cancelNextRoundTimer();
         endRoundCleanup(false);
 
         List<BombMap> readyMaps = new ArrayList<>();
@@ -806,6 +897,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         bombFuseSecondsLeft = 40;
 
         playerTeam.clear();
+        alivePlayers.clear();
+        spectators.clear();
         bombCarrierId = null;
 
         List<Player> planters = new ArrayList<>();
@@ -813,9 +906,14 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
         for (int i = 0; i < participants.size(); i++) {
             Player p = participants.get(i);
+            p.setSpectatorTarget(null);
+            if (p.getGameMode() == GameMode.SPECTATOR) {
+                p.setGameMode(GameMode.SURVIVAL);
+            }
             p.getInventory().clear();
             p.setHealth(20.0);
             p.setFoodLevel(20);
+            alivePlayers.add(p.getUniqueId());
 
             if (i % 2 == 0) {
                 playerTeam.put(p.getUniqueId(), "PLANTERS");
@@ -1031,6 +1129,10 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     @EventHandler
     public void onSwapHandsReload(PlayerSwapHandItemsEvent event) {
         Player p = event.getPlayer();
+        if (spectators.contains(p.getUniqueId())) {
+            event.setCancelled(true);
+            return;
+        }
         ItemStack main = event.getOffHandItem();
         WeaponId w = getWeapon(main);
         if (w != null && w.isGun()) {
@@ -1048,7 +1150,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         BlockDisplay display = (BlockDisplay) w.spawnEntity(surfaceCenter, EntityType.BLOCK_DISPLAY);
         display.setBlock(c4Data);
 
-        // Local unrotated box is width X=0.45, thickness Y=0.20, height Z=0.65
         float width = 0.45f;
         float thick = 0.20f;
         float height = 0.65f;
@@ -1061,22 +1162,18 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             case UP -> translation = new Vector3f(-width / 2f, 0.0f, -height / 2f);
             case DOWN -> translation = new Vector3f(-width / 2f, -thick, -height / 2f);
             case NORTH -> {
-                // Wall facing -Z: rotate +90 deg around X so local +Y points along -Z (outward from wall)
                 rotation.rotateX((float) (Math.PI / 2.0));
                 translation = new Vector3f(-width / 2f, -height / 2f, 0.0f);
             }
             case SOUTH -> {
-                // Wall facing +Z: rotate -90 deg around X so local +Y points along +Z (outward from wall)
                 rotation.rotateX((float) (-Math.PI / 2.0));
                 translation = new Vector3f(-width / 2f, height / 2f, 0.0f);
             }
             case WEST -> {
-                // Wall facing -X: rotate +90 deg around Z so local +Y points along -X (outward from wall)
                 rotation.rotateZ((float) (Math.PI / 2.0));
                 translation = new Vector3f(0.0f, -width / 2f, -height / 2f);
             }
             case EAST -> {
-                // Wall facing +X: rotate -90 deg around Z so local +Y points along +X (outward from wall)
                 rotation.rotateZ((float) (-Math.PI / 2.0));
                 translation = new Vector3f(0.0f, width / 2f, -height / 2f);
             }
@@ -1137,7 +1234,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
             @Override
             public void run() {
-                if (!roundActive || bombPlanted || !planter.isOnline() || planter.isDead()) {
+                if (!roundActive || bombPlanted || !planter.isOnline() || planter.isDead() || spectators.contains(uid)) {
                     currentlyPlanting.remove(uid);
                     cancel();
                     return;
@@ -1219,10 +1316,11 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         awardTeamCoins("PLANTERS", 75, "C4 Detonation Win");
         Bukkit.broadcastMessage(ChatColor.RED + "" + ChatColor.BOLD + "[BombRush] C4 DETONATED! PLANTERS WIN THE ROUND!");
         endRoundCleanup(true);
+        scheduleNextRoundAfterBreak();
     }
 
     private void openWiringDefusalGui(Player defuser) {
-        if (!bombPlanted || !"DEFUSERS".equals(playerTeam.get(defuser.getUniqueId()))) return;
+        if (!bombPlanted || !"DEFUSERS".equals(playerTeam.get(defuser.getUniqueId())) || spectators.contains(defuser.getUniqueId())) return;
         if (plantedBombLoc != null && defuser.getLocation().distanceSquared(plantedBombLoc) > 25.0) {
             defuser.sendMessage(ChatColor.RED + "Get closer to the planted C4 to defuse!");
             return;
@@ -1326,6 +1424,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             }
             Bukkit.broadcastMessage(ChatColor.AQUA + "" + ChatColor.BOLD + "[BombRush] C4 DEFUSED by " + p.getName() + "! DEFUSERS WIN THE ROUND!");
             endRoundCleanup(true);
+            scheduleNextRoundAfterBreak();
         } else {
             p.sendMessage(ChatColor.RED + "Wrong wire! Spark shock!");
             p.damage(4.0);
@@ -1360,7 +1459,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
             @Override
             public void run() {
-                if (!p.isOnline() || p.isDead()) {
+                if (!p.isOnline() || p.isDead() || spectators.contains(uid)) {
                     currentlyHealing.remove(uid);
                     cancel();
                     return;
@@ -1431,11 +1530,11 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         }
     }
 
-    // Allows firing the Sniper with left-click even while actively scoping (Spyglass hand raised)
     @EventHandler
     public void onPlayerArmSwing(PlayerAnimationEvent event) {
         if (event.getAnimationType() != PlayerAnimationType.ARM_SWING) return;
         Player p = event.getPlayer();
+        if (spectators.contains(p.getUniqueId())) return;
         ItemStack hand = p.getInventory().getItemInMainHand();
         if (getWeapon(hand) == WeaponId.SNIPER) {
             fireSniperShot(p, hand);
@@ -1463,6 +1562,11 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     @EventHandler
     public void onPlayerInteract(PlayerInteractEvent event) {
         Player p = event.getPlayer();
+        if (spectators.contains(p.getUniqueId())) {
+            event.setCancelled(true);
+            return;
+        }
+
         Action act = event.getAction();
         ItemStack hand = event.getItem();
 
@@ -1482,7 +1586,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         WeaponId w = getWeapon(hand);
         if (w == null) return;
 
-        // Health Pack: 4s right-click channel
         if (w == WeaponId.HEALTH_PACK) {
             if (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK) {
                 event.setCancelled(true);
@@ -1491,7 +1594,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             return;
         }
 
-        // Grenades: 1st right-click starts 5s timer; 2nd right-click throws; never explodes on impact
         if (w.isGrenade()) {
             if (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK) {
                 event.setCancelled(true);
@@ -1500,7 +1602,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             return;
         }
 
-        // Left-click reloads non-sniper guns; for Sniper, left-click shoots
         if (act == Action.LEFT_CLICK_AIR || act == Action.LEFT_CLICK_BLOCK) {
             if (w == WeaponId.SNIPER) {
                 fireSniperShot(p, hand);
@@ -1510,7 +1611,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             return;
         }
 
-        // Sniper right-click = ADS via spyglass
         if (w == WeaponId.SNIPER) {
             if (act == Action.RIGHT_CLICK_AIR || act == Action.RIGHT_CLICK_BLOCK) {
                 p.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 25, 2, false, false));
@@ -1527,7 +1627,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         if (act != Action.RIGHT_CLICK_AIR && act != Action.RIGHT_CLICK_BLOCK) return;
         if (!w.isGun()) return;
 
-        // Prevent Trident/Bow/Crossbow default vanilla throw/draw animations on guns
         event.setCancelled(true);
 
         if (reloadingPlayers.contains(p.getUniqueId())) return;
@@ -1658,7 +1757,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                         triggerGrenadeEffect(pg);
                         cancel();
                     } else if (pg.landedLoc != null && pg.landedLoc.getWorld() != null) {
-                        pg.landedLoc.getWorld().spawnParticle(Particle.SMOKE, pg.landedLoc.clone().add(0, 0.2, 0), 2, 0.06, 0.06, 0.06, 0.01);
+                        pg.landedLoc.getWorld().spawnParticle(Particle.SMOKE, pg.landedLoc.clone().add(0, 0.2, 0), 1, 0.05, 0.05, 0.05, 0.01);
                     }
                 }
             }.runTaskTimer(this, 0L, 2L);
@@ -1703,37 +1802,30 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
 
                 @Override
                 public void run() {
-                    if (ticks++ > 200) {
+                    if (ticks++ > 45) {
                         cancel();
                         return;
                     }
-                    // Heavy multi-layer smoke wall so players cannot see through it
-                    w.spawnParticle(Particle.CAMPFIRE_SIGNAL_SMOKE, loc.clone().add(0, 1.2, 0), 45, 2.6, 1.8, 2.6, 0.002);
-                    w.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc.clone().add(0, 1.0, 0), 75, 2.8, 1.7, 2.8, 0.003);
-                    w.spawnParticle(Particle.LARGE_SMOKE, loc.clone().add(0, 1.1, 0), 50, 2.5, 1.5, 2.5, 0.005);
+                    w.spawnParticle(Particle.CAMPFIRE_COSY_SMOKE, loc.clone().add(0, 0.9, 0), 12, 1.8, 0.9, 1.8, 0.005);
+                    w.spawnParticle(Particle.SMOKE, loc.clone().add(0, 0.8, 0), 10, 1.6, 0.8, 1.6, 0.01);
                 }
-            }.runTaskTimer(this, 0L, 2L);
+            }.runTaskTimer(this, 0L, 4L);
             case FLASHBANG -> {
-                w.spawnParticle(Particle.FLASH, loc.clone().add(0, 0.5, 0), 16, 0.5, 0.5, 0.5, 0);
-                w.playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_BLAST_FAR, 2.2f, 1.9f);
-                for (Entity e : w.getNearbyEntities(loc, 12.0, 7.0, 12.0)) {
-                    if (e instanceof Player p) {
-                        // Solid white blind screen + Blindness + Slowness + Nausea
-                        p.sendTitle(ChatColor.WHITE + "" + ChatColor.BOLD + "████████████████", ChatColor.WHITE + "████████████████", 2, 65, 25);
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20 * 5, 3, false, false, false));
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20 * 4, 2, false, false, false));
-                        p.addPotionEffect(new PotionEffect(PotionEffectType.NAUSEA, 20 * 5, 1, false, false, false));
-                        p.playSound(p.getLocation(), Sound.BLOCK_BEACON_DEACTIVATE, 1.8f, 2.0f);
+                w.spawnParticle(Particle.FLASH, loc.clone().add(0, 0.4, 0), 2);
+                w.playSound(loc, Sound.ENTITY_FIREWORK_ROCKET_BLAST_FAR, 1.6f, 1.8f);
+                for (Entity e : w.getNearbyEntities(loc, 6.5, 4.5, 6.5)) {
+                    if (e instanceof Player p && !spectators.contains(p.getUniqueId())) {
+                        p.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20 * 3 + 10, 1, false, false, true));
                     }
                 }
             }
             case MOLOTOV -> {
                 List<Location> spawned = new ArrayList<>();
-                for (int i = 0; i < 12; i++) {
+                for (int i = 0; i < 10; i++) {
                     Location fl = loc.clone().add(
-                            ThreadLocalRandom.current().nextDouble(-2.3, 2.3),
+                            ThreadLocalRandom.current().nextDouble(-2.2, 2.2),
                             0,
-                            ThreadLocalRandom.current().nextDouble(-2.3, 2.3)
+                            ThreadLocalRandom.current().nextDouble(-2.2, 2.2)
                     );
                     Block b = fl.getBlock();
                     if (b.getType().isAir()) {
@@ -1748,7 +1840,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                 }
                 w.playSound(loc, Sound.ITEM_FIRECHARGE_USE, 1.4f, 0.9f);
 
-                // Soul-fire burn damage (2.0 HP every 0.5s) + bright flame visuals for 7 seconds
                 new BukkitRunnable() {
                     int ticks = 0;
 
@@ -1765,7 +1856,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
                             return;
                         }
                         for (Location bLoc : spawned) {
-                            w.spawnParticle(Particle.SOUL_FIRE_FLAME, bLoc.clone().add(0.5, 0.3, 0.5), 4, 0.25, 0.15, 0.25, 0.01);
+                            w.spawnParticle(Particle.SOUL_FIRE_FLAME, bLoc.clone().add(0.5, 0.3, 0.5), 3, 0.2, 0.1, 0.2, 0.01);
                             for (Entity e : w.getNearbyEntities(bLoc.clone().add(0.5, 0.5, 0.5), 0.75, 1.0, 0.75)) {
                                 if (e instanceof LivingEntity le && !(e instanceof Display)) {
                                     le.setFireTicks(60);
@@ -1804,6 +1895,7 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             }
             for (Entity e : pt.getWorld().getNearbyEntities(pt, 0.65, 0.9, 0.65)) {
                 if (e.equals(shooter)) continue;
+                if (e instanceof Player pl && spectators.contains(pl.getUniqueId())) continue;
                 if (e instanceof LivingEntity le && !(e instanceof Display)) {
                     hitTarget = le;
                     endLoc = pt;
@@ -1870,6 +1962,10 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     @EventHandler(priority = EventPriority.HIGH)
     public void onDamage(EntityDamageByEntityEvent event) {
         if (event.getDamager() instanceof Player attacker && event.getEntity() instanceof Player victim) {
+            if (spectators.contains(attacker.getUniqueId()) || spectators.contains(victim.getUniqueId())) {
+                event.setCancelled(true);
+                return;
+            }
             String t1 = playerTeam.get(attacker.getUniqueId());
             String t2 = playerTeam.get(victim.getUniqueId());
             if (t1 != null && t1.equals(t2)) {
@@ -1879,9 +1975,6 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
             WeaponId w = getWeapon(attacker.getInventory().getItemInMainHand());
             if (w == WeaponId.KNIFE) {
                 event.setDamage(9.5);
-            } else if (w != null && w.isGun()) {
-                // Prevent any gun base item (like Trident/Bow/Crossbow) from dealing bonus melee damage
-                event.setDamage(1.0);
             }
         }
     }
@@ -1893,17 +1986,41 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player dead = event.getEntity();
+        UUID deadId = dead.getUniqueId();
         Player killer = dead.getKiller();
         if (killer != null && !killer.equals(dead)) {
             rewardCoins(killer.getUniqueId(), 25, "Eliminating " + dead.getName());
         }
 
-        if (dead.getUniqueId().equals(bombCarrierId) && !bombPlanted) {
+        if (deadId.equals(bombCarrierId) && !bombPlanted) {
             event.getDrops().removeIf(this::isBombItem);
             if (dead.getWorld() != null) {
                 dead.getWorld().dropItemNaturally(dead.getLocation(), buildBombItem());
             }
             bombCarrierId = null;
+        }
+
+        if (roundActive && playerTeam.containsKey(deadId)) {
+            alivePlayers.remove(deadId);
+            spectators.add(deadId);
+            event.getDrops().clear();
+
+            String team = playerTeam.get(deadId);
+            Player mate = findLiveTeammate(team, deadId);
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!dead.isOnline() || !roundActive || !spectators.contains(deadId)) return;
+                dead.spigot().respawn();
+                dead.setGameMode(GameMode.SPECTATOR);
+                if (mate != null) {
+                    dead.teleport(mate.getLocation());
+                    dead.setSpectatorTarget(mate);
+                    dead.sendMessage(ChatColor.GRAY + "You died! Spectating teammate " + ChatColor.YELLOW + mate.getName() + ChatColor.GRAY + ".");
+                } else {
+                    dead.sendMessage(ChatColor.GRAY + "You died! No teammates left alive.");
+                }
+                checkTeamEliminationWin();
+            });
         }
     }
 
@@ -1912,6 +2029,8 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         Player p = event.getPlayer();
         profile(p.getUniqueId());
         if (p.getGameMode() == GameMode.CREATIVE && !p.isOp()) {
+            p.setGameMode(GameMode.SURVIVAL);
+        } else if (p.getGameMode() == GameMode.SPECTATOR && !roundActive && !p.isOp()) {
             p.setGameMode(GameMode.SURVIVAL);
         }
     }
@@ -1924,9 +2043,12 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         currentlyPlanting.remove(uid);
         currentlyHealing.remove(uid);
         reloadingPlayers.remove(uid);
+        alivePlayers.remove(uid);
+        spectators.remove(uid);
         PrimedGrenade pg = primedByPlayer.remove(uid);
         if (pg != null) pg.detonated = true;
         saveData();
+        checkTeamEliminationWin();
     }
 
     private void rewardCoins(UUID uid, int amount, String reason) {
@@ -1951,11 +2073,20 @@ public class BombRushPlugin extends JavaPlugin implements Listener, TabExecutor 
         bombPlanted = false;
         bombCarrierId = null;
         playerTeam.clear();
+        alivePlayers.clear();
+        spectators.clear();
         activeDefuses.clear();
         currentlyPlanting.clear();
         currentlyHealing.clear();
         reloadingPlayers.clear();
         projKind.clear();
+
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            p.setSpectatorTarget(null);
+            if (p.getGameMode() == GameMode.SPECTATOR && !p.isOp()) {
+                p.setGameMode(GameMode.SURVIVAL);
+            }
+        }
 
         for (Location bLoc : molotovFireBlocks) {
             if (bLoc.getWorld() != null && bLoc.getBlock().getType() == Material.FIRE) {
